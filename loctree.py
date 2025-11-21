@@ -33,6 +33,7 @@ class Options:
     output: str
     summary: bool
     summary_limit: int
+    show_hidden: bool
 
 
 class GitIgnoreChecker:
@@ -115,8 +116,13 @@ def collect_lines(root: Path, options: Options) -> Tuple[
 
     def walk(current: Path, prefix_flags: List[bool], depth: int) -> bool:
         try:
+            entries = [
+                p
+                for p in current.iterdir()
+                if options.show_hidden or not p.name.startswith(".") and p.name != ".DS_Store"
+            ]
             entries = sorted(
-                current.iterdir(),
+                entries,
                 key=lambda p: (0 if p.is_dir() else 1, p.name.lower()),
             )
         except OSError:
@@ -238,6 +244,12 @@ def main() -> None:
         help="Emit JSON instead of tree output",
     )
     parser.add_argument(
+        "--show-hidden",
+        "-H",
+        action="store_true",
+        help="Include dotfiles and .DS_Store entries",
+    )
+    parser.add_argument(
         "--summary",
         nargs="?",
         const="5",
@@ -282,6 +294,7 @@ def main() -> None:
         output="json" if args.json else "human",
         summary=args.summary is not None,
         summary_limit=summary_limit,
+        show_hidden=args.show_hidden,
     )
 
     results = []

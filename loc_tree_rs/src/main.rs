@@ -51,6 +51,7 @@ struct ParsedArgs {
     summary_limit: usize,
     show_help: bool,
     root_list: Vec<PathBuf>,
+    show_hidden: bool,
 }
 
 impl Default for ParsedArgs {
@@ -66,6 +67,7 @@ impl Default for ParsedArgs {
             summary_limit: 5,
             show_help: false,
             root_list: Vec::new(),
+            show_hidden: false,
         }
     }
 }
@@ -93,6 +95,7 @@ struct Options {
     output: OutputMode,
     summary: bool,
     summary_limit: usize,
+    show_hidden: bool,
 }
 
 struct LargeEntry {
@@ -185,6 +188,10 @@ fn parse_args() -> Result<ParsedArgs, String> {
             }
             "--gitignore" | "-g" => {
                 parsed.use_gitignore = true;
+                i += 1;
+            }
+            "--show-hidden" | "-H" => {
+                parsed.show_hidden = true;
                 i += 1;
             }
             "--json" => {
@@ -338,7 +345,11 @@ fn walk(
 ) -> io::Result<bool> {
     let mut dir_entries: Vec<_> = fs::read_dir(dir)?
         .filter_map(Result::ok)
-        .filter(|entry| entry.file_name() != ".DS_Store")
+        .filter(|entry| {
+            let name = entry.file_name();
+            let is_hidden = name.to_string_lossy().starts_with('.') || name == ".DS_Store";
+            options.show_hidden || !is_hidden
+        })
         .collect();
 
     dir_entries.sort_by(|a, b| {
@@ -504,6 +515,7 @@ fn main() -> io::Result<()> {
         output: parsed.output,
         summary: parsed.summary,
         summary_limit: parsed.summary_limit,
+        show_hidden: parsed.show_hidden,
     };
 
     let mut json_results = Vec::new();

@@ -23,6 +23,11 @@ assert.equal(jsonOut.summary.files, 6);
 assert.equal(jsonOut.summary.directories, 3);
 assert.ok(jsonOut.entries.some((e) => e.path === 'big.txt' && e.isLarge));
 
+const hiddenOut = JSON.parse(run(['.', '--json', '--show-hidden']));
+assert.ok(hiddenOut.entries.some((e) => e.path === '.hidden.txt'));
+assert.equal(hiddenOut.summary.totalLoc, 1015);
+assert.equal(hiddenOut.summary.files, 7);
+
 // Summary text mode
 const summaryOut = run(['.', '--summary', '--color=never']);
 assert.ok(summaryOut.includes('Summary:'));

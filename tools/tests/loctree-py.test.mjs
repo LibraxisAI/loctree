@@ -32,4 +32,9 @@ const cssOut = run(['.', '--ext', 'css']);
 assert.ok(cssOut.includes('style.css'));
 assert.ok(!cssOut.includes('README.md'));
 
+const hiddenOut = JSON.parse(run(['.', '--json', '--show-hidden']));
+assert.ok(hiddenOut.entries.some((e) => e.path === '.hidden.txt'));
+assert.equal(hiddenOut.summary.totalLoc, 1015);
+assert.equal(hiddenOut.summary.files, 7);
+
 console.log('loctree.py basic tests passed');

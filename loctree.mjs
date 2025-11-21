@@ -22,6 +22,7 @@ function parseArgs(argv) {
     output: 'human',
     summary: false,
     summaryLimit: 5,
+    showHidden: false,
     showHelp: false,
   };
 
@@ -106,6 +107,11 @@ function parseArgs(argv) {
 
     if (arg === '--json') {
       options.output = 'json';
+      continue;
+    }
+
+    if (arg === '--show-hidden' || arg === '-H') {
+      options.showHidden = true;
       continue;
     }
 
@@ -247,7 +253,9 @@ async function collectLines(root, options) {
   async function walk(currentPath, prefixFlags, depth) {
     let dirEntries = await readdir(currentPath, { withFileTypes: true });
     dirEntries = dirEntries
-      .filter((entry) => entry.name !== '.DS_Store')
+      .filter((entry) =>
+        options.showHidden ? true : (!entry.name.startsWith('.') && entry.name !== '.DS_Store')
+      )
       .map((entry) => ({ entry, name: entry.name }))
       .sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
 
@@ -327,7 +335,7 @@ async function collectLines(root, options) {
 }
 
 function formatUsage() {
-  return `loc-tree\n\nUsage: loctree.mjs [root ...] [options]\n\nArguments:\n  root                 One or more folders to inspect (defaults to current dir).\n\nOptions:\n  --ext <list>         Comma-separated extensions to include (e.g. --ext rs,ts,tsx).\n                       Prunes non-matching files/dirs from the tree.\n  -I, --ignore <path>  Ignore a folder/file (relative or absolute). Repeatable.\n  --gitignore, -g      Respect current Git ignore rules (requires git).\n  -L, --max-depth <n>  Limit recursion depth (0 = only direct children).\n  --color[=mode]       Colorize large files. mode: auto|always|never (default auto).\n                       -c equals --color=always.\n  --json               Emit JSON instead of a tree view (single root => object, multi-root => array).\n  --summary[=N]        Print totals and top large files (N entries, default 5).\n  --help, -h           Show this message.\n\nExamples:\n  loctree src --ext rs,ts --summary\n  loctree src packages/app src-tauri/src -I node_modules -L 2\n  loctree . --json > tree.json\n`;
+  return `loc-tree\n\nUsage: loctree.mjs [root ...] [options]\n\nArguments:\n  root                 One or more folders to inspect (defaults to current dir).\n\nOptions:\n  --ext <list>         Comma-separated extensions to include (e.g. --ext rs,ts,tsx).\n                       Prunes non-matching files/dirs from the tree.\n  -I, --ignore <path>  Ignore a folder/file (relative or absolute). Repeatable.\n  --gitignore, -g      Respect current Git ignore rules (requires git).\n  -L, --max-depth <n>  Limit recursion depth (0 = only direct children).\n  --color[=mode]       Colorize large files. mode: auto|always|never (default auto).\n                       -c equals --color=always.\n  --json               Emit JSON instead of a tree view (single root => object, multi-root => array).\n  -H, --show-hidden    Include dotfiles and .DS_Store entries.\n  --summary[=N]        Print totals and top large files (N entries, default 5).\n  --help, -h           Show this message.\n\nExamples:\n  loctree src --ext rs,ts --summary\n  loctree src packages/app src-tauri/src -I node_modules -L 2\n  loctree . --json > tree.json\n`;
 }
 
 async function runOne(root, options, isFirst) {

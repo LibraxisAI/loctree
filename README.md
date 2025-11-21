@@ -1,12 +1,25 @@
 # loctree
 
-LOC-aware tree with Git/gitignore awareness, pruning by extension, JSON output, and per-root summaries. Available in Rust (recommended), Node.js, and Python.
+[![CI](https://github.com/LibraxisAI/loctree/actions/workflows/ci.yml/badge.svg)](https://github.com/LibraxisAI/loctree/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ## Why use it
 - Filters by extension (`--ext rs,ts,tsx,py,...`) and prunes non-matching branches.
 - Respects gitignore (`-g`), custom ignores (`-I`), and max depth (`-L`).
 - Human or JSON output; per-root summary of totals and “large” files (>=1000 LOC).
 - Multi-root: pass several paths in one command.
+
+## Why use it
+- Filters by extension (`--ext rs,ts,tsx,py,...`) and prunes non-matching branches.
+- Respects gitignore (`-g`), custom ignores (`-I`), and max depth (`-L`).
+- Human or JSON output; per-root summary of totals and “large” files (>=1000 LOC).
+- Multi-root: pass several paths in one command.
+
+## Use cases
+- Quickly spot oversized files or heavy folders before review (`--summary`, color highlighting for >=1000 LOC).
+- Language-sliced sweeps: `--ext ts,tsx` for FE reviews, `--ext rs` for Tauri/BE, `--ext css` for styling audits.
+- Scriptable inventory: `--json` feeds CI checks (e.g., fail if any file > N LOC or if new files appear outside allowlist).
+- Repo hygiene: combine `--gitignore` and repeated `-I` to skip generated/build/output trees.
 
 ## Install
 Recommended (Rust binary):
@@ -34,6 +47,7 @@ JSON shape: single root -> object; multi-root -> array. Large files (>=1000 LOC)
 - `-I, --ignore <path>`  Ignore path (repeatable; abs or relative).
 - `-g, --gitignore`      Respect gitignore via `git check-ignore`.
 - `-L, --max-depth <n>`  Limit recursion depth.
+- `-H, --show-hidden`    Show dotfiles and `.DS_Store`.
 - `--color[=mode]`       auto|always|never (default auto); `-c` = always.
 - `--json`               Machine-readable output.
 - `--summary[=N]`        Totals + top-N large files (default 5).
