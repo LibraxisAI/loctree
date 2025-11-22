@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+# Get repo root
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+echo "Running Node unit tests..."
+node tools/tests/test_loctree_node_unit.mjs
+
+echo "Running Python unit tests..."
+python3 tools/tests/test_loctree_py_unit.py
+
+echo "Running Rust unit tests..."
+(cd loc_tree_rs && cargo test --quiet)
+
+echo "Running Integration tests..."
+node tools/tests/loctree-node.test.mjs
+node tools/tests/loctree-py.test.mjs
+node tools/tests/loctree-rs.test.mjs
+
+echo "All checks passed."

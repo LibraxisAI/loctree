@@ -1,2 +1,3 @@
-/loc_tree_rs/target
+/loctree_rs/target
 /.codex
+*.pyc

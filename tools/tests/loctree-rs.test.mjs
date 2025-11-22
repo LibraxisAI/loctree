@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const repoRoot = resolve(__dirname, '..', '..');
 const fixtureRoot = resolve(repoRoot, 'tools', 'fixtures', 'basic-tree');
-const cliDir = resolve(repoRoot, 'loc_tree_rs');
+const cliDir = resolve(repoRoot, 'loctree_rs');
 
 function run(args) {
   return execFileSync('cargo', ['run', '--quiet', '--', ...args], {
@@ -60,4 +60,4 @@ assert.equal(lines.length, 1);
 const parsedJsonl = JSON.parse(lines[0]);
 assert.equal(parsedJsonl.root.endsWith('import-graph'), true);
 
-console.log('loc_tree_rs basic tests passed');
+console.log('loctree_rs basic tests passed');

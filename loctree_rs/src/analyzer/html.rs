@@ -340,20 +340,7 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
       layout: { name: 'preset', animate: false, fit: true }
       });
 
-    const download = (filename, data, mime) => {
-      let blob = null;
-      if (data instanceof Blob) {
-        blob = data;
-      } else if (typeof data === 'string' && data.startsWith('data:')) {
-        const parts = data.split(',');
-        const b64 = parts.length > 1 ? parts[1] : '';
-        const bin = atob(b64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        blob = new Blob([bytes], { type: mime || parts[0].split(';')[0].replace('data:','') || 'application/octet-stream' });
-      } else {
-        blob = new Blob([data], {type: mime || 'application/octet-stream'});
-      }
+    const downloadBlob = (filename, blob) => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; a.download = filename;
@@ -428,7 +415,13 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
     if (pngBtn) pngBtn.addEventListener('click', () => {
       const dark = darkChk && darkChk.checked;
       const dataUrl = cy.png({ bg: dark ? '#0f1115' : '#ffffff', full: true, scale: 2 });
-      download(`${g.id}-graph.png`, dataUrl, 'image/png');
+      // cy.png already returns a data URL; use direct download to preserve format
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `${g.id}-graph.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     });
     if (jsonBtn) jsonBtn.addEventListener('click', () => {
       const payload = {

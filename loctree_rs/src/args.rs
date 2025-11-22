@@ -27,6 +27,7 @@ pub struct ParsedArgs {
     pub analyze_limit: usize,
     pub report_path: Option<PathBuf>,
     pub serve: bool,
+    pub serve_keepalive: bool,
     pub editor_cmd: Option<String>,
 }
 
@@ -56,6 +57,7 @@ impl Default for ParsedArgs {
             analyze_limit: 8,
             report_path: None,
             serve: false,
+            serve_keepalive: false,
             editor_cmd: None,
         }
     }
@@ -219,6 +221,11 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
                 parsed.serve = true;
                 i += 1;
             }
+            "--serve-keepalive" | "--serve-wait" => {
+                parsed.serve = true;
+                parsed.serve_keepalive = true;
+                i += 1;
+            }
             "--editor-cmd" => {
                 let next = args
                     .get(i + 1)
@@ -372,4 +379,36 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
     parsed.root_list = roots;
 
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_extensions() {
+        let res = parse_extensions("rs,ts").unwrap();
+        assert!(res.contains("rs"));
+        assert!(res.contains("ts"));
+        assert_eq!(res.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_extensions_empty() {
+        assert!(parse_extensions("").is_none());
+    }
+
+    #[test]
+    fn test_parse_color_mode() {
+        assert_eq!(parse_color_mode("always").unwrap(), ColorMode::Always);
+        assert_eq!(parse_color_mode("never").unwrap(), ColorMode::Never);
+        assert!(parse_color_mode("invalid").is_err());
+    }
+
+    #[test]
+    fn test_parse_summary_limit() {
+        assert_eq!(parse_summary_limit("5").unwrap(), 5);
+        assert!(parse_summary_limit("0").is_err());
+        assert!(parse_summary_limit("abc").is_err());
+    }
 }
