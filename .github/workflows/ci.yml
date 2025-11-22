@@ -14,7 +14,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Run node tests
+      - name: Run node unit tests
+        run: node tools/tests/test_loctree_node_unit.mjs
+      - name: Run node integration tests
         run: node tools/tests/loctree-node.test.mjs
 
   test-python:
@@ -26,7 +28,9 @@ jobs:
           python-version: '3.11'
       - name: Install deps
         run: pip install --upgrade pip
-      - name: Run python tests
+      - name: Run python unit tests
+        run: python3 tools/tests/test_loctree_py_unit.py
+      - name: Run python integration tests
         run: node tools/tests/loctree-py.test.mjs
 
   test-rust:
@@ -34,5 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run rust tests
+      - name: Run rust unit tests
+        run: cd loctree_rs && cargo test
+      - name: Run rust integration tests
         run: node tools/tests/loctree-rs.test.mjs

@@ -8,11 +8,14 @@ pub struct ParsedArgs {
     pub ignore_patterns: Vec<String>,
     pub ignore_symbols: Option<HashSet<String>>,
     pub ignore_symbols_preset: Option<String>,
+    pub focus_patterns: Vec<String>,
+    pub exclude_report_patterns: Vec<String>,
     pub graph: bool,
     pub use_gitignore: bool,
     pub max_depth: Option<usize>,
     pub color: ColorMode,
     pub output: OutputMode,
+    pub json_output_path: Option<PathBuf>,
     pub summary: bool,
     pub summary_limit: usize,
     pub show_help: bool,
@@ -34,11 +37,14 @@ impl Default for ParsedArgs {
             ignore_patterns: Vec::new(),
             ignore_symbols: None,
             ignore_symbols_preset: None,
+            focus_patterns: Vec::new(),
+            exclude_report_patterns: Vec::new(),
             graph: false,
             use_gitignore: false,
             max_depth: None,
             color: ColorMode::Auto,
             output: OutputMode::Human,
+            json_output_path: None,
             summary: false,
             summary_limit: 5,
             show_help: false,
@@ -92,6 +98,19 @@ pub fn parse_extensions(raw: &str) -> Option<HashSet<String>> {
     } else {
         Some(set)
     }
+}
+
+fn parse_glob_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .filter_map(|segment| {
+            let trimmed = segment.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .collect()
 }
 
 pub fn parse_ignore_symbols(raw: &str) -> Option<HashSet<String>> {
@@ -175,7 +194,22 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
             }
             "--json" => {
                 parsed.output = OutputMode::Json;
+                if let Some(next) = args.get(i + 1) {
+                    if !next.starts_with('-') {
+                        parsed.json_output_path = Some(PathBuf::from(next));
+                        i += 2;
+                        continue;
+                    }
+                }
                 i += 1;
+            }
+            "--json-out" | "--json-output" => {
+                let next = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--json-out requires a file path".to_string())?;
+                parsed.output = OutputMode::Json;
+                parsed.json_output_path = Some(PathBuf::from(next));
+                i += 2;
             }
             "--jsonl" => {
                 parsed.output = OutputMode::Jsonl;
@@ -188,7 +222,7 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
                 parsed.report_path = Some(PathBuf::from(next));
                 i += 2;
             }
-            "--serve" => {
+            "--serve" | "--serve-keepalive" | "--serve-wait" => {
                 parsed.serve = true;
                 i += 1;
             }
@@ -292,6 +326,32 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
                 parsed.ignore_symbols_preset = Some(value.to_string());
                 i += 1;
             }
+            "--focus" => {
+                let next = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--focus requires a glob or comma list".to_string())?;
+                parsed.focus_patterns.extend(parse_glob_list(next));
+                i += 2;
+            }
+            _ if arg.starts_with("--focus=") => {
+                let value = arg.trim_start_matches("--focus=");
+                parsed.focus_patterns.extend(parse_glob_list(value));
+                i += 1;
+            }
+            "--exclude-report" => {
+                let next = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--exclude-report requires a glob or comma list".to_string())?;
+                parsed.exclude_report_patterns.extend(parse_glob_list(next));
+                i += 2;
+            }
+            _ if arg.starts_with("--exclude-report=") => {
+                let value = arg.trim_start_matches("--exclude-report=");
+                parsed
+                    .exclude_report_patterns
+                    .extend(parse_glob_list(value));
+                i += 1;
+            }
             "-I" | "--ignore" => {
                 let next = args
                     .get(i + 1)
@@ -319,4 +379,36 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
     parsed.root_list = roots;
 
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_extensions() {
+        let res = parse_extensions("rs,ts").unwrap();
+        assert!(res.contains("rs"));
+        assert!(res.contains("ts"));
+        assert_eq!(res.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_extensions_empty() {
+        assert!(parse_extensions("").is_none());
+    }
+
+    #[test]
+    fn test_parse_color_mode() {
+        assert_eq!(parse_color_mode("always").unwrap(), ColorMode::Always);
+        assert_eq!(parse_color_mode("never").unwrap(), ColorMode::Never);
+        assert!(parse_color_mode("invalid").is_err());
+    }
+
+    #[test]
+    fn test_parse_summary_limit() {
+        assert_eq!(parse_summary_limit("5").unwrap(), 5);
+        assert!(parse_summary_limit("0").is_err());
+        assert!(parse_summary_limit("abc").is_err());
+    }
 }

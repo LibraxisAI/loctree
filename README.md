@@ -105,7 +105,6 @@ JSON shape: single root -> object; multi-root -> array. Large files (>= 1000 LOC
 CLI flags (all runtimes):
 
 - `--ext <list>`         Comma-separated extensions; prunes others (analyzer defaults to ts,tsx,js,jsx,mjs,cjs,rs,css,py).
-- `--ignore-symbols <l>` Analyzer mode: comma-separated symbol names to skip in duplicate-export detection (case-insensitive).
 - `-I, --ignore <path>`  Ignore path (repeatable; abs or relative).
 - `-g, --gitignore`      Respect gitignore via `git check-ignore`.
 - `-L, --max-depth <n>`  Limit recursion depth.
@@ -120,6 +119,8 @@ CLI flags (all runtimes):
 - `--editor-cmd <tpl>`   Command template for opening files (`{file}`, `{line}`), default tries `code -g`.
 - `--ignore-symbols <l>` Analyzer mode: comma-separated symbol names to skip in duplicate-export detection (case-insensitive).
 - `--ignore-symbols-preset <name>` Analyzer mode: predefined ignore set (currently `common` → `main,run,setup,test_*`).
+- `--focus <glob[,..]>`  Analyzer: show only duplicates where at least one file matches the globs.
+- `--exclude-report <glob[,..]>` Analyzer: exclude from the report duplicates whose files match the globs (e.g., `**/__tests__/**`).
 - `--summary[=N]`        Totals + top-N large files (default 5).
 - `-A, --analyze-imports` Import/export analyzer mode (duplicate exports, re-export cascades, dynamic imports).
 - `--limit <N>`          Analyzer: cap top lists for duplicates/dynamic imports (default 8).

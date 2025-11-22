@@ -170,3 +170,55 @@ pub fn sort_dir_entries(entries: &mut [std::fs::DirEntry]) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::gather_files;
+    use crate::types::{ColorMode, Options, OutputMode};
+    use std::collections::HashSet;
+
+    fn opts_with_ext(ext: &str) -> Options {
+        Options {
+            extensions: Some(HashSet::from([ext.to_string()])),
+            ignore_paths: Vec::new(),
+            use_gitignore: false,
+            max_depth: Some(1),
+            color: ColorMode::Never,
+            output: OutputMode::Human,
+            summary: false,
+            summary_limit: 5,
+            show_hidden: false,
+            loc_threshold: crate::types::DEFAULT_LOC_THRESHOLD,
+            analyze_limit: 8,
+            report_path: None,
+            serve: false,
+            editor_cmd: None,
+        }
+    }
+
+    #[test]
+    fn gather_files_filters_by_extension_and_depth() {
+        let root = std::env::temp_dir().join("loctree_fs_utils");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join("keep.rs"), "// ok").unwrap();
+        std::fs::write(root.join("skip.txt"), "// skip").unwrap();
+        std::fs::write(root.join(".hidden.rs"), "// hidden").unwrap();
+        std::fs::write(root.join("nested").join("deep.rs"), "// deep").unwrap();
+
+        let mut files = Vec::new();
+        let opts = opts_with_ext("rs");
+        gather_files(&root, &opts, 0, None, &mut files).unwrap();
+
+        let as_strings: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert!(as_strings.contains(&"keep.rs".to_string()));
+        assert!(!as_strings.contains(&"skip.txt".to_string()));
+        assert!(as_strings.contains(&"deep.rs".to_string()));
+        assert!(!as_strings.contains(&".hidden.rs".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

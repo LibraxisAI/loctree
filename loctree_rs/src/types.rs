@@ -4,21 +4,21 @@ pub const DEFAULT_LOC_THRESHOLD: usize = 1000;
 pub const COLOR_RED: &str = "\u{001b}[31m";
 pub const COLOR_RESET: &str = "\u{001b}[0m";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ColorMode {
     Auto,
     Always,
     Never,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OutputMode {
     Human,
     Json,
     Jsonl,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     Tree,
     AnalyzeImports,
@@ -104,12 +104,14 @@ pub struct ExportSymbol {
 #[derive(Clone)]
 pub struct CommandRef {
     pub name: String,
+    pub exposed_name: Option<String>,
     pub line: usize,
 }
 
 #[derive(Clone)]
 pub struct FileAnalysis {
     pub path: String,
+    pub loc: usize,
     pub imports: Vec<ImportEntry>,
     pub reexports: Vec<ReexportEntry>,
     pub dynamic_imports: Vec<String>,
