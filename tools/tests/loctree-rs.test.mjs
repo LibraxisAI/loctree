@@ -42,4 +42,22 @@ const filteredOut = run([fixtureRoot, '--ext', 'rs', '--gitignore']);
 assert.ok(!filteredOut.includes('target'));
 assert.ok(!filteredOut.includes('node_modules'));
 
+const importGraphRoot = resolve(repoRoot, 'tools', 'fixtures', 'import-graph');
+const analysis = JSON.parse(run([importGraphRoot, '-A', '--json', '--ext', 'ts', '--color=never']));
+assert.equal(analysis.filesAnalyzed, 4);
+const dupShared = analysis.duplicateExports.find((d) => d.name === 'shared');
+assert.ok(dupShared);
+assert.ok(dupShared.files.length >= 2);
+assert.ok(analysis.reexportCascades.some((c) => c.from.endsWith('a.ts') && c.to.endsWith('c.ts')));
+assert.ok(analysis.dynamicImports.some((d) => d.file.endsWith('d.ts')));
+assert.ok(Array.isArray(analysis.duplicateExportsRanked));
+const rankedShared = analysis.duplicateExportsRanked.find((d) => d.name === 'shared');
+assert.ok(rankedShared && rankedShared.canonical);
+
+const jsonlOut = run([importGraphRoot, '-A', '--jsonl', '--ext', 'ts']);
+const lines = jsonlOut.trim().split('\n');
+assert.equal(lines.length, 1);
+const parsedJsonl = JSON.parse(lines[0]);
+assert.equal(parsedJsonl.root.endsWith('import-graph'), true);
+
 console.log('loc_tree_rs basic tests passed');

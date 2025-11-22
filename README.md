@@ -12,6 +12,7 @@ designed to be fast, scriptable, and usable from multiple runtimes: Rust (native
 - Respects `.gitignore` (`-g`), custom ignores (`-I`), and max depth (`-L`).
 - Human or JSON output; per-root summary with totals and large files (>= 1000 LOC).
 - Multi-root: pass several paths in one command.
+- Import/export analyzer mode (`-A/--analyze-imports`) surfaces duplicate exports, re-export chains, and dynamic imports.
 
 Common use cases:
 
@@ -90,6 +91,7 @@ Quick start:
 loctree src --ext rs,tsx --summary
 loctree src src-tauri/src -I node_modules -L 2
 loctree . --json > tree.json
+loctree packages/app -A --ext ts,tsx --json   # import/export analyzer
 ```
 
 JSON shape: single root -> object; multi-root -> array. Large files (>= 1000 LOC) are listed separately and colored when
@@ -103,8 +105,14 @@ CLI flags (all runtimes):
 - `-L, --max-depth <n>`  Limit recursion depth.
 - `-H, --show-hidden`    Show dotfiles and `.DS_Store`.
 - `--color[=mode]`       `auto|always|never` (default `auto`); `-c` = always.
+- `--loc <n>`            Large-file threshold for highlighting (tree mode). Default 1000.
 - `--json`               Machine-readable output.
+- `--jsonl`              Analyzer: one JSON object per line (per root).
 - `--summary[=N]`        Totals + top-N large files (default 5).
+- `-A, --analyze-imports` Import/export analyzer mode (duplicate exports, re-export cascades, dynamic imports).
+- `--limit <N>`          Analyzer: cap top lists for duplicates/dynamic imports (default 8).
+- `--fail-on-duplicates <N>` Analyzer: exit 2 if duplicate-export groups exceed N (for CI).
+- `--fail-on-dynamic <N>`   Analyzer: exit 2 if files with dynamic imports exceed N (for CI).
 
 Runtime-specific entry points:
 

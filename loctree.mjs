@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const LARGE_FILE_THRESHOLD = 1000;
+const DEFAULT_LOC_THRESHOLD = 1000;
 const COLORS = {
   red: '\u001B[31m',
   reset: '\u001B[0m',
@@ -24,6 +24,7 @@ function parseArgs(argv) {
     summaryLimit: 5,
     showHidden: false,
     showHelp: false,
+    locThreshold: DEFAULT_LOC_THRESHOLD,
   };
 
   const setExtensions = (rawValue) => {
@@ -125,6 +126,20 @@ function parseArgs(argv) {
           index += 1;
         }
       }
+      continue;
+    }
+
+    if (arg === '--loc') {
+      const next = argv[index + 1];
+      if (!next || next.startsWith('-')) {
+        throw new Error('--loc requires a positive integer (LOC threshold)');
+      }
+      const value = Number.parseInt(next, 10);
+      if (Number.isNaN(value) || value <= 0) {
+        throw new Error('--loc requires a positive integer (LOC threshold)');
+      }
+      options.locThreshold = value;
+      index += 1;
       continue;
     }
 
@@ -299,7 +314,7 @@ async function collectLines(root, options) {
             stats.files += 1;
             stats.filesWithLoc += 1;
             stats.totalLoc += loc;
-            const isLarge = loc >= LARGE_FILE_THRESHOLD;
+            const isLarge = loc >= options.locThreshold;
             if (isLarge) {
               largeEntries.push({ relativePath, loc });
             }
@@ -404,7 +419,7 @@ async function runOne(root, options, isFirst) {
       continue;
     }
     const baseLine = `${label.padEnd(maxLabelLen, ' ')}  ${loc.toString().padStart(6, ' ')}`;
-    if (colorEnabled && loc >= LARGE_FILE_THRESHOLD) {
+    if (colorEnabled && loc >= options.locThreshold) {
       console.log(`${COLORS.red}${baseLine}${COLORS.reset}`);
     } else {
       console.log(baseLine);
@@ -412,7 +427,7 @@ async function runOne(root, options, isFirst) {
   }
 
   if (sortedLargeEntries.length) {
-    console.log(`\nLarge files (>= ${LARGE_FILE_THRESHOLD} LOC):`);
+    console.log(`\nLarge files (>= ${options.locThreshold} LOC):`);
     sortedLargeEntries.forEach((entry) => {
       const line = `  ${entry.relativePath} (${entry.loc} LOC)`;
       if (colorEnabled) {

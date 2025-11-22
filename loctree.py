@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-LARGE_FILE_THRESHOLD = 1000
+DEFAULT_LOC_THRESHOLD = 1000
 COLOR_RED = "\033[31m"
 COLOR_RESET = "\033[0m"
 
@@ -34,6 +34,7 @@ class Options:
     summary: bool
     summary_limit: int
     show_hidden: bool
+    loc_threshold: int
 
 
 class GitIgnoreChecker:
@@ -161,7 +162,7 @@ def collect_lines(root: Path, options: Options) -> Tuple[
                         stats["files"] += 1
                         stats["filesWithLoc"] += 1
                         stats["totalLoc"] += loc
-                        is_large = loc >= LARGE_FILE_THRESHOLD
+                        is_large = loc >= options.loc_threshold
                         if is_large:
                             large_entries.append((str(relative), loc))
                         lines.append(
@@ -255,6 +256,12 @@ def main() -> None:
         const="5",
         help="Print totals and top-N large files (default 5)",
     )
+    parser.add_argument(
+        "--loc",
+        type=int,
+        default=DEFAULT_LOC_THRESHOLD,
+        help="Treat files with >= n LOC as large (default 1000)",
+    )
 
     args = parser.parse_args()
     if args.max_depth is not None and args.max_depth < 0:
@@ -302,6 +309,7 @@ def main() -> None:
         summary=args.summary is not None,
         summary_limit=summary_limit,
         show_hidden=args.show_hidden,
+        loc_threshold=args.loc,
     )
 
     results = []
@@ -367,7 +375,7 @@ def main() -> None:
                 print(line)
 
         if sorted_large:
-            print(f"\nLarge files (>= {LARGE_FILE_THRESHOLD} LOC):")
+            print(f"\nLarge files (>= {options.loc_threshold} LOC):")
             for rel, loc in sorted_large:
                 summary_line = f"  {rel} ({loc} LOC)"
                 if color_enabled:
