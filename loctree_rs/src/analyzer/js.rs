@@ -7,8 +7,8 @@ use crate::types::{
 
 use super::regexes::{
     regex_dynamic_import, regex_export_brace, regex_export_default, regex_export_named_decl,
-    regex_import, regex_invoke_snake, regex_reexport_named, regex_reexport_star, regex_safe_invoke,
-    regex_side_effect_import, regex_tauri_invoke,
+    regex_import, regex_invoke_audio, regex_invoke_snake, regex_reexport_named,
+    regex_reexport_star, regex_safe_invoke, regex_side_effect_import, regex_tauri_invoke,
 };
 use super::resolvers::resolve_reexport_target;
 use super::{brace_list_to_names, offset_to_line};
@@ -48,6 +48,16 @@ pub(crate) fn analyze_js_file(
         }
     }
     for caps in regex_tauri_invoke().captures_iter(content) {
+        if let Some(cmd) = caps.get(1) {
+            let line = offset_to_line(content, cmd.start());
+            command_calls.push(CommandRef {
+                name: cmd.as_str().to_string(),
+                exposed_name: None,
+                line,
+            });
+        }
+    }
+    for caps in regex_invoke_audio().captures_iter(content) {
         if let Some(cmd) = caps.get(1) {
             let line = offset_to_line(content, cmd.start());
             command_calls.push(CommandRef {
@@ -145,5 +155,74 @@ pub(crate) fn analyze_js_file(
         exports,
         command_calls,
         command_handlers: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::analyze_js_file;
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    #[test]
+    fn detects_commands_reexports_and_exports() {
+        let content = r#"
+import defaultThing from "./dep";
+import type { Foo } from "./types";
+import "./side.css";
+export { bar } from "./reexports";
+export * from "./star";
+export const localValue = 1;
+export default function MyComp() {}
+export { namedA, namedB as aliasB };
+const dyn = import("./lazy");
+safeInvoke("cmd_safe");
+invokeSnake("cmd_snake");
+invoke("cmd_invoke");
+safeInvoke<Foo.Bar>("cmd_generic_safe");
+invokeSnake<MyType>("cmd_generic_snake");
+invoke<Inline<Ok>>("cmd_generic_invoke");
+invokeAudioCamel<Baz>("cmd_audio_generic");
+        "#;
+
+        let analysis = analyze_js_file(
+            content,
+            Path::new("src/app.tsx"),
+            Path::new("src"),
+            Some(&HashSet::from(["ts".to_string(), "tsx".to_string()])),
+            "app.tsx".to_string(),
+        );
+
+        assert!(analysis
+            .imports
+            .iter()
+            .any(|i| i.source == "./dep" && matches!(i.kind, crate::types::ImportKind::Static)));
+        assert!(analysis
+            .imports
+            .iter()
+            .any(|i| i.source == "./side.css"
+                && matches!(i.kind, crate::types::ImportKind::SideEffect)));
+        assert!(analysis.reexports.iter().any(|r| r.source == "./reexports"));
+        assert!(analysis.reexports.iter().any(|r| r.source == "./star"));
+        assert!(analysis.dynamic_imports.iter().any(|s| s == "./lazy"));
+
+        let commands: Vec<_> = analysis
+            .command_calls
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert!(commands.contains(&"cmd_safe".to_string()));
+        assert!(commands.contains(&"cmd_snake".to_string()));
+        assert!(commands.contains(&"cmd_invoke".to_string()));
+        assert!(commands.contains(&"cmd_generic_safe".to_string()));
+        assert!(commands.contains(&"cmd_generic_snake".to_string()));
+        assert!(commands.contains(&"cmd_generic_invoke".to_string()));
+        assert!(commands.contains(&"cmd_audio_generic".to_string()));
+
+        // exports should include defaults and named
+        let export_names: Vec<_> = analysis.exports.iter().map(|e| e.name.clone()).collect();
+        assert!(export_names.contains(&"localValue".to_string()));
+        assert!(export_names.contains(&"MyComp".to_string()));
+        assert!(export_names.contains(&"namedA".to_string()));
     }
 }

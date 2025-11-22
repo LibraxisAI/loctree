@@ -21,12 +21,32 @@ pub struct GraphNode {
     pub loc: usize,
     pub x: f32,
     pub y: f32,
+    pub component: usize,
+    pub degree: usize,
+    pub detached: bool,
+}
+
+#[derive(Clone, Serialize)]
+pub struct GraphComponent {
+    pub id: usize,
+    pub size: usize,
+    #[serde(rename = "edges")]
+    pub edge_count: usize,
+    pub nodes: Vec<String>,
+    pub isolated_count: usize,
+    pub sample: String,
+    pub loc_sum: usize,
+    pub detached: bool,
+    pub tauri_frontend: usize,
+    pub tauri_backend: usize,
 }
 
 #[derive(Clone, Serialize)]
 pub struct GraphData {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<(String, String, String)>, // from, to, kind
+    pub components: Vec<GraphComponent>,
+    pub main_component_id: usize,
 }
 
 #[derive(Clone)]

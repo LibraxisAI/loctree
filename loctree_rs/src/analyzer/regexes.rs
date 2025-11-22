@@ -51,12 +51,20 @@ pub(crate) fn regex_export_brace() -> &'static Regex {
 
 pub(crate) fn regex_safe_invoke() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"safeInvoke\(\s*["']([^"']+)["']"#).unwrap())
+    RE.get_or_init(|| Regex::new(r#"safeInvoke\s*(?:<[^)]*>)?\(\s*["']([^"']+)["']"#).unwrap())
 }
 
 pub(crate) fn regex_invoke_snake() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"invokeSnake\(\s*["']([^"']+)["']"#).unwrap())
+    RE.get_or_init(|| Regex::new(r#"invokeSnake\s*(?:<[^)]*>)?\(\s*["']([^"']+)["']"#).unwrap())
+}
+
+pub(crate) fn regex_invoke_audio() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    // capture invokeAudio(...) and invokeAudioCamel(...) helpers used by FE audio API
+    RE.get_or_init(|| {
+        Regex::new(r#"invokeAudio(?:Camel)?\s*(?:<[^)]*>)?\(\s*["']([^"']+)["']"#).unwrap()
+    })
 }
 
 pub(crate) fn regex_tauri_command_fn() -> &'static Regex {
@@ -71,7 +79,7 @@ pub(crate) fn regex_tauri_invoke() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         // Matches top-level invoke("cmd") calls (avoids foo.invoke())
-        Regex::new(r#"(?m)(?:^|[^A-Za-z0-9_\.])invoke\(\s*[\"']([^\"']+)[\"']"#)
+        Regex::new(r#"(?m)(?:^|[^A-Za-z0-9_\.])invoke\s*(?:<[^)]*>)?\(\s*[\"']([^\"']+)[\"']"#)
             .unwrap()
     })
 }

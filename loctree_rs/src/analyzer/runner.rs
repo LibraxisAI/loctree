@@ -18,10 +18,14 @@ use super::open_server::{current_open_base, open_in_browser, start_open_server};
 use super::py::analyze_py_file;
 use super::resolvers::{resolve_js_relative, resolve_python_relative};
 use super::rust::analyze_rust_file;
-use super::{AiInsight, CommandGap, GraphData, GraphNode, RankedDup, ReportSection};
+use super::{
+    AiInsight, CommandGap, GraphComponent, GraphData, GraphNode, RankedDup, ReportSection,
+};
 
 const MAX_GRAPH_NODES: usize = 8000;
 const MAX_GRAPH_EDGES: usize = 12000;
+const DEFAULT_EXCLUDE_REPORT_PATTERNS: &[&str] =
+    &["**/__tests__/**", "scripts/semgrep-fixtures/**"];
 
 fn normalize_cmd_name(name: &str) -> String {
     let mut out = String::new();
@@ -55,18 +59,56 @@ fn is_dev_file(path: &str) -> bool {
         || path.contains("story.")
 }
 
-fn layout_positions(
+fn layout_positions(comps: &[Vec<String>]) -> HashMap<String, (f32, f32)> {
+    let cols = (comps.len() as f32).sqrt().ceil() as usize + 1;
+    let spacing = 1200f32;
+    let mut positions: HashMap<String, (f32, f32)> = HashMap::new();
+    for (idx, comp) in comps.iter().enumerate() {
+        let row = idx / cols;
+        let col = idx % cols;
+        let cx = (col as f32) * spacing;
+        let cy = (row as f32) * spacing;
+        let n = comp.len().max(1) as f32;
+        let radius = 160.0 + 30.0 * n.sqrt();
+        for (i, node) in comp.iter().enumerate() {
+            let theta = (i as f32) * (std::f32::consts::TAU / n);
+            let jitter = 12.0 * (i as f32 % 3.0) - 12.0;
+            let x = cx + radius * theta.cos() + jitter;
+            let y = cy + radius * theta.sin() - jitter;
+            positions.insert(node.clone(), (x, y));
+        }
+    }
+    positions
+}
+
+#[allow(clippy::type_complexity)]
+fn compute_components(
     nodes: &[String],
     edges: &[(String, String, String)],
-) -> HashMap<String, (f32, f32)> {
+) -> (
+    Vec<Vec<String>>,
+    HashMap<String, usize>,
+    HashMap<String, usize>,
+) {
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for n in nodes {
         adj.entry(n.clone()).or_default();
     }
     for (a, b, _) in edges {
-        adj.entry(a.clone()).or_default().push(b.clone());
-        adj.entry(b.clone()).or_default().push(a.clone());
+        if a.is_empty() || b.is_empty() {
+            continue;
+        }
+        let entry = adj.entry(a.clone()).or_default();
+        if !entry.contains(b) {
+            entry.push(b.clone());
+        }
+        let back = adj.entry(b.clone()).or_default();
+        if !back.contains(a) {
+            back.push(a.clone());
+        }
     }
+
+    let degrees: HashMap<String, usize> = adj.iter().map(|(k, v)| (k.clone(), v.len())).collect();
 
     let mut visited: HashSet<String> = HashSet::new();
     let mut comps: Vec<Vec<String>> = Vec::new();
@@ -90,25 +132,23 @@ fn layout_positions(
         comps.push(comp);
     }
 
-    let cols = (comps.len() as f32).sqrt().ceil() as usize + 1;
-    let spacing = 1200f32;
-    let mut positions: HashMap<String, (f32, f32)> = HashMap::new();
+    comps.sort_by(|a, b| {
+        b.len().cmp(&a.len()).then(
+            a.first()
+                .unwrap_or(&String::new())
+                .cmp(b.first().unwrap_or(&String::new())),
+        )
+    });
+
+    let mut node_to_component: HashMap<String, usize> = HashMap::new();
     for (idx, comp) in comps.iter().enumerate() {
-        let row = idx / cols;
-        let col = idx % cols;
-        let cx = (col as f32) * spacing;
-        let cy = (row as f32) * spacing;
-        let n = comp.len().max(1) as f32;
-        let radius = 160.0 + 30.0 * n.sqrt();
-        for (i, node) in comp.iter().enumerate() {
-            let theta = (i as f32) * (std::f32::consts::TAU / n);
-            let jitter = 12.0 * (i as f32 % 3.0) - 12.0;
-            let x = cx + radius * theta.cos() + jitter;
-            let y = cy + radius * theta.sin() - jitter;
-            positions.insert(node.clone(), (x, y));
+        let cid = idx + 1;
+        for node in comp {
+            node_to_component.insert(node.clone(), cid);
         }
     }
-    positions
+
+    (comps, node_to_component, degrees)
 }
 
 fn build_globset(patterns: &[String]) -> Option<GlobSet> {
@@ -311,7 +351,13 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
     }
 
     let focus_set = opt_globset(&parsed.focus_patterns);
-    let exclude_set = opt_globset(&parsed.exclude_report_patterns);
+    let mut exclude_patterns = parsed.exclude_report_patterns.clone();
+    exclude_patterns.extend(
+        DEFAULT_EXCLUDE_REPORT_PATTERNS
+            .iter()
+            .map(|p| p.to_string()),
+    );
+    let exclude_set = opt_globset(&exclude_patterns);
 
     if parsed.serve {
         if let Some((base, handle)) =
@@ -369,6 +415,11 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
 
         for file in files {
             let analysis = analyze_file(&file, root_path, options.extensions.as_ref())?;
+            let is_excluded_for_commands = exclude_set
+                .as_ref()
+                .map(|set| set.is_match(Path::new(&analysis.path)))
+                .unwrap_or(false);
+
             loc_map.insert(analysis.path.clone(), analysis.loc);
             for exp in &analysis.exports {
                 let name_lc = exp.name.to_lowercase();
@@ -442,18 +493,31 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                     }
                 }
             }
-            for call in &analysis.command_calls {
-                fe_commands
-                    .entry(call.name.clone())
-                    .or_default()
-                    .push((analysis.path.clone(), call.line, call.name.clone()));
-            }
-            for handler in &analysis.command_handlers {
-                let key = handler.exposed_name.as_ref().unwrap_or(&handler.name);
-                be_commands
-                    .entry(key.clone())
-                    .or_default()
-                    .push((analysis.path.clone(), handler.line, handler.name.clone()));
+            if !is_excluded_for_commands {
+                for call in &analysis.command_calls {
+                    fe_commands.entry(call.name.clone()).or_default().push((
+                        analysis.path.clone(),
+                        call.line,
+                        call.name.clone(),
+                    ));
+                }
+                for handler in &analysis.command_handlers {
+                    let mut key = handler
+                        .exposed_name
+                        .as_ref()
+                        .unwrap_or(&handler.name)
+                        .clone();
+                    if let Some(stripped) = key.strip_suffix("_command") {
+                        key = stripped.to_string();
+                    } else if let Some(stripped) = key.strip_suffix("_cmd") {
+                        key = stripped.to_string();
+                    }
+                    be_commands.entry(key).or_default().push((
+                        analysis.path.clone(),
+                        handler.line,
+                        handler.name.clone(),
+                    ));
+                }
             }
             analyses.push(analysis);
         }
@@ -574,7 +638,8 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                 if kept.is_empty() {
                     None
                 } else {
-                    let impl_name = locs.iter()
+                    let impl_name = locs
+                        .iter()
                         .find(|(p, l, _)| p == &kept[0].0 && *l == kept[0].1)
                         .map(|(_, _, n)| n.clone());
                     Some(CommandGap {
@@ -599,7 +664,8 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                 if kept.is_empty() {
                     None
                 } else {
-                    let impl_name = locs.iter()
+                    let impl_name = locs
+                        .iter()
                         .find(|(p, l, _)| p == &kept[0].0 && *l == kept[0].1)
                         .map(|(_, _, n)| n.clone());
                     Some(CommandGap {
@@ -648,8 +714,9 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                 },
                 command_counts: (fe_commands.len(), be_commands.len()),
                 open_base: section_open,
-                graph: if parsed.graph && options.report_path.is_some() && !graph_edges.is_empty() {
-                    let mut nodes: HashSet<String> = HashSet::new();
+                graph: if parsed.graph && options.report_path.is_some() {
+                    let mut nodes: HashSet<String> =
+                        analyses.iter().map(|a| a.path.clone()).collect();
                     for (a, b, _) in &graph_edges {
                         if !a.is_empty() {
                             nodes.insert(a.clone());
@@ -658,7 +725,10 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                             nodes.insert(b.clone());
                         }
                     }
-                    if nodes.len() > MAX_GRAPH_NODES || graph_edges.len() > MAX_GRAPH_EDGES {
+
+                    if nodes.is_empty() {
+                        None
+                    } else if nodes.len() > MAX_GRAPH_NODES || graph_edges.len() > MAX_GRAPH_EDGES {
                         eprintln!(
                             "[loctree][warn] graph skipped ({} nodes, {} edges > limits)",
                             nodes.len(),
@@ -666,8 +736,59 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                         );
                         None
                     } else {
-                        let nodes_vec: Vec<String> = nodes.into_iter().collect();
-                        let positions = layout_positions(&nodes_vec, &graph_edges);
+                        let mut nodes_vec: Vec<String> = nodes.into_iter().collect();
+                        nodes_vec.sort();
+                        let (component_nodes, node_to_component, degrees) =
+                            compute_components(&nodes_vec, &graph_edges);
+                        let positions = layout_positions(&component_nodes);
+                        let main_component_id = if component_nodes.is_empty() { 0 } else { 1 };
+
+                        let mut component_meta: Vec<GraphComponent> = Vec::new();
+                        for (idx, comp_nodes) in component_nodes.iter().enumerate() {
+                            let mut sorted_nodes = comp_nodes.clone();
+                            sorted_nodes.sort();
+                            let cid = idx + 1;
+                            let comp_set: HashSet<String> = sorted_nodes.iter().cloned().collect();
+                            let edge_count = graph_edges
+                                .iter()
+                                .filter(|(a, b, _)| comp_set.contains(a) && comp_set.contains(b))
+                                .count();
+                            let isolated_count = sorted_nodes
+                                .iter()
+                                .filter(|n| degrees.get(*n).cloned().unwrap_or(0) == 0)
+                                .count();
+                            let loc_sum: usize = sorted_nodes
+                                .iter()
+                                .map(|n| loc_map.get(n).cloned().unwrap_or(0))
+                                .sum();
+                            let sample = sorted_nodes.first().cloned().unwrap_or_default();
+
+                            let tauri_frontend = fe_commands
+                                .values()
+                                .flat_map(|locs| locs.iter())
+                                .filter(|(path, _, _)| comp_set.contains(path))
+                                .count();
+                            let tauri_backend = be_commands
+                                .values()
+                                .flat_map(|locs| locs.iter())
+                                .filter(|(path, _, _)| comp_set.contains(path))
+                                .count();
+                            let detached = main_component_id != 0 && cid != main_component_id;
+
+                            component_meta.push(GraphComponent {
+                                id: cid,
+                                size: sorted_nodes.len(),
+                                edge_count,
+                                nodes: sorted_nodes,
+                                isolated_count,
+                                sample,
+                                loc_sum,
+                                detached,
+                                tauri_frontend,
+                                tauri_backend,
+                            });
+                        }
+
                         let graph_nodes: Vec<GraphNode> = nodes_vec
                             .iter()
                             .filter_map(|id| {
@@ -678,18 +799,27 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                                 let loc = loc_map.get(id).cloned().unwrap_or(0);
                                 let label =
                                     id.rsplit('/').next().unwrap_or(id.as_str()).to_string();
+                                let component = *node_to_component.get(id).unwrap_or(&0);
+                                let degree = *degrees.get(id).unwrap_or(&0);
+                                let detached =
+                                    main_component_id != 0 && component != main_component_id;
                                 Some(GraphNode {
                                     id: id.clone(),
                                     label,
                                     loc,
                                     x,
                                     y,
+                                    component,
+                                    degree,
+                                    detached,
                                 })
                             })
                             .collect();
                         Some(GraphData {
                             nodes: graph_nodes,
                             edges: graph_edges.clone(),
+                            components: component_meta,
+                            main_component_id,
                         })
                     }
                 } else {

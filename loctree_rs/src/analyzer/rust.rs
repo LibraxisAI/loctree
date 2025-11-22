@@ -259,3 +259,49 @@ pub(crate) fn analyze_rust_file(content: &str, relative: String) -> FileAnalysis
         command_handlers,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::analyze_rust_file;
+
+    #[test]
+    fn parses_exports_and_tauri_commands() {
+        let content = r#"
+use crate::something::Type;
+pub use crate::foo::{Bar as Baz, Quux};
+pub use crate::module::*;
+pub struct MyStruct;
+pub enum MyEnum { A }
+pub const ANSWER: u32 = 42;
+pub type Alias = u64;
+
+#[tauri::command(rename = "exposed_cmd")]
+pub async fn internal_name() {}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn snake_case_func() {}
+        "#;
+
+        let analysis = analyze_rust_file(content, "src/lib.rs".to_string());
+
+        // check reexports and public items
+        assert!(analysis
+            .reexports
+            .iter()
+            .any(|r| r.source.contains("foo::{Bar as Baz")));
+        let export_names: Vec<_> = analysis.exports.iter().map(|e| e.name.clone()).collect();
+        assert!(export_names.contains(&"MyStruct".to_string()));
+        assert!(export_names.contains(&"MyEnum".to_string()));
+        assert!(export_names.contains(&"ANSWER".to_string()));
+        assert!(export_names.contains(&"Alias".to_string()));
+
+        // Tauri commands with rename/rename_all
+        let handlers: Vec<_> = analysis
+            .command_handlers
+            .iter()
+            .map(|c| c.exposed_name.clone().unwrap())
+            .collect();
+        assert!(handlers.contains(&"exposed_cmd".to_string()));
+        assert!(handlers.contains(&"snakeCaseFunc".to_string()));
+    }
+}
