@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.2.9] - 2025-11-22
+
+### Added
+- Graph toolbar upgrades: fit, reset, graph-only fullscreen, dark mode toggle, and tooltips with full path + LOC; node size now scales with LOC and uses stable preset layout computed in Rust.
+- Graph safety/perf guards: caps at 8k nodes / 12k edges, skips overflow with warnings, and prevents rendering when filters empty; legend/hints updated.
+
+### Changed
+- Cleaner import graph (edge labels removed, deduped CSS, more defensive `buildElements`/filter handling).
+- Tauri command coverage table restyled for readability (pill rows, clearer columns).
+
 ## [0.2.8] - 2025-11-22
 
 ### Added

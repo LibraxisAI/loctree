@@ -49,6 +49,12 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
 .graph-empty{font-size:13px;color:#777;text-align:center;padding:24px;}
 .graph-controls button{font-size:12px;padding:4px 8px;border:1px solid #ccc;background:#f8f8f8;border-radius:6px;cursor:pointer;}
 .graph-controls button:hover{background:#eee;}
+.command-table th,.command-table td{vertical-align:top;}
+.command-table code{background:transparent;color:inherit;font-weight:600;}
+.command-pill{display:inline-block;padding:3px 6px;border-radius:6px;background:#eef2ff;color:#2b2f3a;font-size:12px;margin:2px 4px 2px 0;}
+.dark .command-pill{background:#1f2635;color:#e9ecf5;}
+.command-col{width:50%;}
+.dark body{background:#0f1115;color:#d7dde5;}
 .dark body{background:#0f1115;color:#d7dde5;}
 .dark table th{background:#1c2029;color:#d7dde5;}
 .dark table td{background:#0f1115;color:#d7dde5;border-color:#2a2f3a;}
@@ -340,17 +346,20 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
       darkChk.addEventListener('change', () => applyDark(darkChk.checked));
     }
 
-    const containerParent = container.parentNode;
-    if (fsBtn && containerParent && containerParent.requestFullscreen) {
+    const fsTarget = container;
+    if (fsBtn && fsTarget && fsTarget.requestFullscreen) {
       fsBtn.addEventListener('click', () => {
         if (document.fullscreenElement) {
           document.exitFullscreen();
         } else {
-          containerParent.requestFullscreen().catch(()=>{});
+          fsTarget.requestFullscreen().catch(()=>{});
         }
       });
       document.addEventListener('fullscreenchange', () => {
         fsBtn.textContent = document.fullscreenElement ? 'exit fullscreen' : 'fullscreen';
+        if (!document.fullscreenElement) {
+          cy.fit();
+        }
       });
     }
 
@@ -376,6 +385,10 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
     };
     const hideTip = () => { tooltip.style.display = 'none'; };
 
+    cy.off('mouseover');
+    cy.off('mouseout');
+    cy.off('tap');
+    cy.off('tapdrag');
     cy.on('mouseover', 'node', (evt) => showTip(evt, evt.target));
     cy.on('mouseout', 'node', hideTip);
     cy.on('tap', 'node', (evt) => showTip(evt, evt.target));

@@ -19,6 +19,9 @@ use super::resolvers::{resolve_js_relative, resolve_python_relative};
 use super::rust::analyze_rust_file;
 use super::{CommandGap, GraphData, GraphNode, RankedDup, ReportSection};
 
+const MAX_GRAPH_NODES: usize = 8000;
+const MAX_GRAPH_EDGES: usize = 12000;
+
 fn is_dev_file(path: &str) -> bool {
     path.contains("__tests__")
         || path.contains("stories")
@@ -476,30 +479,47 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                 graph: if parsed.graph && options.report_path.is_some() && !graph_edges.is_empty() {
                     let mut nodes: HashSet<String> = HashSet::new();
                     for (a, b, _) in &graph_edges {
-                        nodes.insert(a.clone());
-                        nodes.insert(b.clone());
+                        if !a.is_empty() {
+                            nodes.insert(a.clone());
+                        }
+                        if !b.is_empty() {
+                            nodes.insert(b.clone());
+                        }
                     }
-                    let nodes_vec: Vec<String> = nodes.into_iter().collect();
-                    let positions = layout_positions(&nodes_vec, &graph_edges);
-                    let graph_nodes: Vec<GraphNode> = nodes_vec
-                        .iter()
-                        .map(|id| {
-                            let (x, y) = positions.get(id).cloned().unwrap_or((0.0, 0.0));
-                            let loc = loc_map.get(id).cloned().unwrap_or(0);
-                            let label = id.rsplit('/').next().unwrap_or(id.as_str()).to_string();
-                            GraphNode {
-                                id: id.clone(),
-                                label,
-                                loc,
-                                x,
-                                y,
-                            }
+                    if nodes.len() > MAX_GRAPH_NODES || graph_edges.len() > MAX_GRAPH_EDGES {
+                        eprintln!(
+                            "[loctree][warn] graph skipped ({} nodes, {} edges > limits)",
+                            nodes.len(),
+                            graph_edges.len()
+                        );
+                        None
+                    } else {
+                        let nodes_vec: Vec<String> = nodes.into_iter().collect();
+                        let positions = layout_positions(&nodes_vec, &graph_edges);
+                        let graph_nodes: Vec<GraphNode> = nodes_vec
+                            .iter()
+                            .filter_map(|id| {
+                                if id.is_empty() {
+                                    return None;
+                                }
+                                let (x, y) = positions.get(id).cloned().unwrap_or((0.0, 0.0));
+                                let loc = loc_map.get(id).cloned().unwrap_or(0);
+                                let label =
+                                    id.rsplit('/').next().unwrap_or(id.as_str()).to_string();
+                                Some(GraphNode {
+                                    id: id.clone(),
+                                    label,
+                                    loc,
+                                    x,
+                                    y,
+                                })
+                            })
+                            .collect();
+                        Some(GraphData {
+                            nodes: graph_nodes,
+                            edges: graph_edges.clone(),
                         })
-                        .collect();
-                    Some(GraphData {
-                        nodes: graph_nodes,
-                        edges: graph_edges.clone(),
-                    })
+                    }
                 } else {
                     None
                 },
