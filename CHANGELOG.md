@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.2.6] - 2025-11-22
+
+### Added
+- Flaga `--ignore-symbols` dla analizera – pozwala pominąć wskazane symbole (np. `main,run`) przy wykrywaniu duplikatów eksportów.
+
+### Changed
+- Dokumentacja i help zaktualizowane o nową flagę.
+
+## [0.2.5] - 2025-11-22
+
+### Added
+- Import/export analyzer obejmuje Pythona: `import`/`from`/`__all__`, wykrywa dynamiczne `importlib.import_module` oraz `__import__`, raportuje re-export przez `from x import *`.
+- Domyślne rozszerzenia analizera zawierają teraz `py`.
+
+### Changed
+- README i przewodnik Moniki uzupełnione o wsparcie Pythona.
+
+## [0.2.4] - 2025-11-22
+
+### Added
+- Optional `--serve` mini HTTP server: HTML raport zawiera klikalne linki `file:line` otwierające się w edytorze/OS (`code -g` domyślnie, konfigurowalne `--editor-cmd`). Bezpieczne: ścieżki kanonikalizowane i ograniczone do podanych rootów.
+- Raporty i JSON zawierają lokalizacje wywołań/handlerów komend Tauri, co przyspiesza diagnozę FE↔BE.
+
+### Changed
+- `--serve`/`--editor-cmd` opisane w pomocy/README; auto-open raportu w przeglądarce pozostaje.
+
+## [0.2.3] - 2025-11-22
+
+### Added
+- Analyzer raportuje pokrycie komend Tauri: wywołania FE (`safeInvoke`/`invokeSnake`) vs. handlery z `#[tauri::command]` w Rust; pokazuje brakujące i nieużywane handlery również w raporcie HTML/JSON/CLI.
+
+### Changed
+- Hardening auto-open HTML (kanonikalizacja ścieżki, brak kontroli znaków sterujących).
+- Ujednolicone zależności: `regex = 1.12` w manifest.
+- Ukryte pliki rozpoznawane wyłącznie po kropce (bez specjal-case `.DS_Store`).
+
 ## [0.2.2] - 2025-11-22
 
 ### Added

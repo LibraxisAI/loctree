@@ -12,13 +12,17 @@ designed to be fast, scriptable, and usable from multiple runtimes: Rust (native
 - Respects `.gitignore` (`-g`), custom ignores (`-I`), and max depth (`-L`).
 - Human or JSON output; per-root summary with totals and large files (>= 1000 LOC).
 - Multi-root: pass several paths in one command.
-- Import/export analyzer mode (`-A/--analyze-imports`) surfaces duplicate exports, re-export chains, and dynamic imports
-  across TS/JS (incl. dynamic imports), CSS `@import`, and Rust `use/pub use`/public items.
+- Import/export analyzer mode (`-A/--analyze-imports`) surfaces duplicate exports, re-export chains, dynamic imports,
+  CSS `@import`, Rust `use/pub use`/public items, Python `import`/`from` + `__all__` + `importlib`/`__import__`
+  dynamic loads, oraz mapuje komendy Tauri: wywołania FE (`safeInvoke`/`invokeSnake`) vs. backend `#[tauri::command]`
+  (brakujące/nieużywane handlery w CLI/JSON/HTML). Z `--serve` linki w HTML otwierają pliki w edytorze/OS (domyślnie
+  `code -g` lub `open`/`xdg-open`).
 
 Common use cases:
 
 - Pre-review hygiene: quickly spot oversized files or heavy folders (`--summary`, color highlights for >= 1000 LOC).
-- Language-focused sweeps: `--ext ts,tsx` for FE, `--ext rs` for Rust, `--ext css` for styling audits.
+- Language-focused sweeps: `--ext ts,tsx` for FE, `--ext rs` for Rust, `--ext py` for Python modules, `--ext css` for
+  styling audits.
 - CI scripting: `--json` feeds automated checks (e.g., fail if any file > N LOC or if new files appear outside an
   allowlist).
 - General repo hygiene: combine `--gitignore` and repeated `-I` to skip generated/build/output trees.
@@ -100,7 +104,8 @@ JSON shape: single root -> object; multi-root -> array. Large files (>= 1000 LOC
 
 CLI flags (all runtimes):
 
-- `--ext <list>`         Comma-separated extensions; prunes others (analyzer defaults to ts,tsx,js,jsx,mjs,cjs,rs,css).
+- `--ext <list>`         Comma-separated extensions; prunes others (analyzer defaults to ts,tsx,js,jsx,mjs,cjs,rs,css,py).
+- `--ignore-symbols <l>` Analyzer mode: comma-separated symbol names to skip in duplicate-export detection (case-insensitive).
 - `-I, --ignore <path>`  Ignore path (repeatable; abs or relative).
 - `-g, --gitignore`      Respect gitignore via `git check-ignore`.
 - `-L, --max-depth <n>`  Limit recursion depth.
@@ -109,6 +114,9 @@ CLI flags (all runtimes):
 - `--loc <n>`            Large-file threshold for highlighting (tree mode). Default 1000.
 - `--json`               Machine-readable output.
 - `--jsonl`              Analyzer: one JSON object per line (per root).
+- `--html-report <file>` Write analyzer results to an HTML report file.
+- `--serve`              Start a tiny local server so HTML links can open files in your editor/OS.
+- `--editor-cmd <tpl>`   Command template for opening files (`{file}`, `{line}`), default tries `code -g`.
 - `--summary[=N]`        Totals + top-N large files (default 5).
 - `-A, --analyze-imports` Import/export analyzer mode (duplicate exports, re-export cascades, dynamic imports).
 - `--limit <N>`          Analyzer: cap top lists for duplicates/dynamic imports (default 8).

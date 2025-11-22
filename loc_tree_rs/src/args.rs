@@ -6,6 +6,7 @@ use crate::types::{ColorMode, Mode, OutputMode, DEFAULT_LOC_THRESHOLD};
 pub struct ParsedArgs {
     pub extensions: Option<HashSet<String>>,
     pub ignore_patterns: Vec<String>,
+    pub ignore_symbols: Option<HashSet<String>>,
     pub use_gitignore: bool,
     pub max_depth: Option<usize>,
     pub color: ColorMode,
@@ -20,6 +21,8 @@ pub struct ParsedArgs {
     pub mode: Mode,
     pub analyze_limit: usize,
     pub report_path: Option<PathBuf>,
+    pub serve: bool,
+    pub editor_cmd: Option<String>,
 }
 
 impl Default for ParsedArgs {
@@ -27,6 +30,7 @@ impl Default for ParsedArgs {
         Self {
             extensions: None,
             ignore_patterns: Vec::new(),
+            ignore_symbols: None,
             use_gitignore: false,
             max_depth: None,
             color: ColorMode::Auto,
@@ -41,6 +45,8 @@ impl Default for ParsedArgs {
             mode: Mode::Tree,
             analyze_limit: 8,
             report_path: None,
+            serve: false,
+            editor_cmd: None,
         }
     }
 }
@@ -70,6 +76,25 @@ pub fn parse_extensions(raw: &str) -> Option<HashSet<String>> {
         .split(',')
         .filter_map(|segment| {
             let trimmed = segment.trim().trim_start_matches('.').to_lowercase();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .collect();
+    if set.is_empty() {
+        None
+    } else {
+        Some(set)
+    }
+}
+
+pub fn parse_ignore_symbols(raw: &str) -> Option<HashSet<String>> {
+    let set: HashSet<String> = raw
+        .split(',')
+        .filter_map(|segment| {
+            let trimmed = segment.trim().to_lowercase();
             if trimmed.is_empty() {
                 None
             } else {
@@ -143,6 +168,17 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
                 parsed.report_path = Some(PathBuf::from(next));
                 i += 2;
             }
+            "--serve" => {
+                parsed.serve = true;
+                i += 1;
+            }
+            "--editor-cmd" => {
+                let next = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--editor-cmd requires a command template".to_string())?;
+                parsed.editor_cmd = Some(next.clone());
+                i += 2;
+            }
             "--summary" => {
                 parsed.summary = true;
                 if let Some(next) = args.get(i + 1) {
@@ -210,6 +246,18 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
             _ if arg.starts_with("--ext=") => {
                 let value = arg.trim_start_matches("--ext=");
                 parsed.extensions = parse_extensions(value);
+                i += 1;
+            }
+            "--ignore-symbols" => {
+                let next = args.get(i + 1).ok_or_else(|| {
+                    "--ignore-symbols requires a comma-separated list".to_string()
+                })?;
+                parsed.ignore_symbols = parse_ignore_symbols(next);
+                i += 2;
+            }
+            _ if arg.starts_with("--ignore-symbols=") => {
+                let value = arg.trim_start_matches("--ignore-symbols=");
+                parsed.ignore_symbols = parse_ignore_symbols(value);
                 i += 1;
             }
             "-I" | "--ignore" => {

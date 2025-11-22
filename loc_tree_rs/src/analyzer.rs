@@ -1,11 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io;
+use std::io::{self, BufRead, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use std::thread;
 
 use regex::Regex;
+
+use crate::types::CommandRef;
 use serde_json::json;
 
 use crate::args::ParsedArgs;
@@ -14,6 +18,8 @@ use crate::types::{
     ExportIndex, ExportSymbol, FileAnalysis, ImportEntry, ImportKind, Options, OutputMode,
     ReexportEntry, ReexportKind,
 };
+
+static OPEN_SERVER_BASE: OnceLock<String> = OnceLock::new();
 
 type RankedDup = (
     String,
@@ -32,6 +38,15 @@ struct ReportSection {
     cascades: Vec<(String, String)>,
     dynamic: Vec<(String, Vec<String>)>,
     analyze_limit: usize,
+    missing_handlers: Vec<CommandGap>,
+    unused_handlers: Vec<CommandGap>,
+    open_base: Option<String>,
+}
+
+#[derive(Clone)]
+struct CommandGap {
+    name: String,
+    locations: Vec<(String, usize)>,
 }
 
 fn escape_html(raw: &str) -> String {
@@ -39,6 +54,45 @@ fn escape_html(raw: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+fn url_encode_component(input: &str) -> String {
+    input
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
+}
+
+fn url_decode_component(input: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut iter = input.as_bytes().iter().cloned();
+    while let Some(b) = iter.next() {
+        if b == b'%' {
+            let hi = iter.next()?;
+            let lo = iter.next()?;
+            let hex = [hi, lo];
+            let s = std::str::from_utf8(&hex).ok()?;
+            let v = u8::from_str_radix(s, 16).ok()?;
+            out.push(v as char);
+        } else {
+            out.push(b as char);
+        }
+    }
+    Some(out)
+}
+
+fn linkify(base: Option<&str>, file: &str, line: usize) -> String {
+    if let Some(base) = base {
+        let href = format!("{}/open?f={}&l={}", base, url_encode_component(file), line);
+        format!("<a href=\"{}\">{}:{}</a>", href, file, line)
+    } else {
+        format!("{}:{}", file, line)
+    }
 }
 
 fn render_html_report(path: &Path, sections: &[ReportSection]) -> io::Result<()> {
@@ -123,6 +177,50 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
             }
             out.push_str("</table>");
         }
+
+        // Command coverage
+        out.push_str("<h3>Tauri command coverage</h3>");
+        if section.missing_handlers.is_empty() && section.unused_handlers.is_empty() {
+            out.push_str("<p class=\"muted\">All frontend calls have matching handlers.</p>");
+        } else {
+            out.push_str("<table><tr><th>Missing handlers (FE→BE)</th><th>Handlers unused by FE</th></tr><tr><td>");
+            if section.missing_handlers.is_empty() {
+                out.push_str("<span class=\"muted\">None</span>");
+            } else {
+                let lines: Vec<String> = section
+                    .missing_handlers
+                    .iter()
+                    .map(|g| {
+                        let locs: Vec<String> = g
+                            .locations
+                            .iter()
+                            .map(|(f, l)| linkify(section.open_base.as_deref(), f, *l))
+                            .collect();
+                        format!("{} ({})", g.name, locs.join("; "))
+                    })
+                    .collect();
+                out.push_str(&escape_html(&lines.join(" · ")));
+            }
+            out.push_str("</td><td>");
+            if section.unused_handlers.is_empty() {
+                out.push_str("<span class=\"muted\">None</span>");
+            } else {
+                let lines: Vec<String> = section
+                    .unused_handlers
+                    .iter()
+                    .map(|g| {
+                        let locs: Vec<String> = g
+                            .locations
+                            .iter()
+                            .map(|(f, l)| linkify(section.open_base.as_deref(), f, *l))
+                            .collect();
+                        format!("{} ({})", g.name, locs.join("; "))
+                    })
+                    .collect();
+                out.push_str(&escape_html(&lines.join(" · ")));
+            }
+            out.push_str("</td></tr></table>");
+        }
     }
 
     out.push_str("</body></html>");
@@ -174,6 +272,142 @@ fn open_in_browser(path: &Path) {
     );
 }
 
+fn open_file_in_editor(
+    full_path: &Path,
+    line: usize,
+    editor_cmd: Option<&String>,
+) -> io::Result<()> {
+    if let Some(tpl) = editor_cmd {
+        let replaced = tpl
+            .replace("{file}", full_path.to_string_lossy().as_ref())
+            .replace("{line}", &line.to_string());
+        let parts: Vec<String> = replaced.split_whitespace().map(|s| s.to_string()).collect();
+        if let Some((prog, args)) = parts.split_first() {
+            let status = Command::new(prog).args(args).status()?;
+            if status.success() {
+                return Ok(());
+            }
+        }
+    } else if Command::new("code")
+        .arg("-g")
+        .arg(format!("{}:{}", full_path.to_string_lossy(), line.max(1)))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    let fallback = Command::new("open")
+        .arg(full_path)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    #[cfg(target_os = "windows")]
+    let fallback = Command::new("cmd")
+        .args(["/C", "start", full_path.to_string_lossy().as_ref()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let fallback = Command::new("xdg-open")
+        .arg(full_path)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if fallback {
+        Ok(())
+    } else {
+        Err(io::Error::other("could not open file via editor"))
+    }
+}
+
+fn handle_open_request(
+    stream: &mut TcpStream,
+    roots: &[PathBuf],
+    editor_cmd: Option<&String>,
+    request_line: &str,
+) {
+    let mut parts = request_line.split_whitespace();
+    let _method = parts.next();
+    let target = parts.next().unwrap_or("/");
+    if !target.starts_with("/open?") {
+        let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n");
+        return;
+    }
+    let query = &target[6..];
+    let mut file = None;
+    let mut line = 1usize;
+    for pair in query.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            match k {
+                "f" => file = url_decode_component(v),
+                "l" => {
+                    line = v.parse::<usize>().unwrap_or(1).max(1);
+                }
+                _ => {}
+            }
+        }
+    }
+    let Some(rel_or_abs) = file else {
+        let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n");
+        return;
+    };
+
+    let mut candidate = None;
+    let path_obj = PathBuf::from(&rel_or_abs);
+    if path_obj.is_absolute() {
+        if let Ok(canon) = path_obj.canonicalize() {
+            if roots.iter().any(|r| canon.starts_with(r)) {
+                candidate = Some(canon);
+            }
+        }
+    } else {
+        for root in roots {
+            let joined = root.join(&path_obj);
+            if let Ok(canon) = joined.canonicalize() {
+                if canon.starts_with(root) {
+                    candidate = Some(canon);
+                    break;
+                }
+            }
+        }
+    }
+
+    let Some(full) = candidate else {
+        let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n");
+        return;
+    };
+
+    let status = open_file_in_editor(&full, line, editor_cmd);
+    let response = if status.is_ok() {
+        "HTTP/1.1 200 OK\r\n\r\nopened"
+    } else {
+        "HTTP/1.1 500 Internal Server Error\r\n\r\nopen failed"
+    };
+    let _ = stream.write_all(response.as_bytes());
+}
+
+fn start_open_server(
+    roots: Vec<PathBuf>,
+    editor_cmd: Option<String>,
+) -> Option<(u16, thread::JoinHandle<()>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").ok()?;
+    let port = listener.local_addr().ok()?.port();
+    let handle = thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut buf = String::new();
+            let mut reader = io::BufReader::new(&stream);
+            if reader.read_line(&mut buf).is_ok() {
+                handle_open_request(&mut stream, &roots, editor_cmd.as_ref(), buf.trim());
+            }
+        }
+    });
+    Some((port, handle))
+}
+
 fn regex_import() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"(?m)^\s*import\s+([^;]+?)\s+from\s+["']([^"']+)["']"#).unwrap())
@@ -219,6 +453,24 @@ fn regex_export_default() -> &'static Regex {
 fn regex_export_brace() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"(?m)^\s*export\s+\{([^}]+)\}\s*;?"#).unwrap())
+}
+
+fn regex_safe_invoke() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"safeInvoke\(\s*["']([^"']+)["']"#).unwrap())
+}
+
+fn regex_invoke_snake() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"invokeSnake\(\s*["']([^"']+)["']"#).unwrap())
+}
+
+fn regex_tauri_command_fn() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?m)#\s*\[\s*tauri::command[^\]]*\]\s*pub\s+async\s+fn\s+([A-Za-z0-9_]+)"#)
+            .unwrap()
+    })
 }
 
 fn regex_css_import() -> &'static Regex {
@@ -283,6 +535,31 @@ fn rust_pub_const_regexes() -> &'static [Regex] {
     .as_slice()
 }
 
+fn regex_py_dynamic_importlib() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"importlib\.import_module\(\s*["']([^"']+)["']"#).unwrap())
+}
+
+fn regex_py_dynamic_dunder() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"__import__\(\s*["']([^"']+)["']"#).unwrap())
+}
+
+fn regex_py_all() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?s)__all__\s*=\s*\[([^\]]*)\]"#).unwrap())
+}
+
+fn regex_py_def() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)"#).unwrap())
+}
+
+fn regex_py_class() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?m)^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)"#).unwrap())
+}
+
 fn resolve_reexport_target(
     file_path: &Path,
     root: &Path,
@@ -322,6 +599,85 @@ fn resolve_reexport_target(
     }
 }
 
+fn resolve_python_relative(
+    module: &str,
+    file_path: &Path,
+    root: &Path,
+    exts: Option<&HashSet<String>>,
+) -> Option<String> {
+    if !module.starts_with('.') {
+        return None;
+    }
+
+    let mut leading = 0usize;
+    for ch in module.chars() {
+        if ch == '.' {
+            leading += 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut base = file_path.parent()?;
+    for _ in 1..leading {
+        base = base.parent()?;
+    }
+
+    let remainder = module.trim_start_matches('.').replace('.', "/");
+    let joined = if remainder.is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join(remainder)
+    };
+
+    if joined.is_dir() {
+        return None;
+    }
+
+    if joined.extension().is_none() {
+        if let Some(set) = exts {
+            for ext in set {
+                let candidate = joined.with_extension(ext);
+                if candidate.exists() {
+                    return candidate
+                        .canonicalize()
+                        .ok()
+                        .and_then(|p| {
+                            p.strip_prefix(root)
+                                .ok()
+                                .map(|q| q.to_string_lossy().to_string())
+                        })
+                        .or_else(|| {
+                            candidate
+                                .canonicalize()
+                                .ok()
+                                .map(|p| p.to_string_lossy().to_string())
+                        });
+                }
+            }
+        }
+    }
+
+    if joined.exists() {
+        joined
+            .canonicalize()
+            .ok()
+            .and_then(|p| {
+                p.strip_prefix(root)
+                    .ok()
+                    .map(|q| q.to_string_lossy().to_string())
+            })
+            .or_else(|| {
+                joined
+                    .canonicalize()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
+    } else {
+        None
+    }
+}
+
 fn analyze_js_file(
     content: &str,
     path: &Path,
@@ -330,6 +686,7 @@ fn analyze_js_file(
     relative: String,
 ) -> FileAnalysis {
     let mut imports = Vec::new();
+    let mut command_calls = Vec::new();
     for caps in regex_import().captures_iter(content) {
         let source = caps.get(2).map(|m| m.as_str()).unwrap_or("").to_string();
         imports.push(ImportEntry {
@@ -343,6 +700,25 @@ fn analyze_js_file(
             source,
             kind: ImportKind::SideEffect,
         });
+    }
+
+    for caps in regex_safe_invoke().captures_iter(content) {
+        if let Some(cmd) = caps.get(1) {
+            let line = offset_to_line(content, cmd.start());
+            command_calls.push(CommandRef {
+                name: cmd.as_str().to_string(),
+                line,
+            });
+        }
+    }
+    for caps in regex_invoke_snake().captures_iter(content) {
+        if let Some(cmd) = caps.get(1) {
+            let line = offset_to_line(content, cmd.start());
+            command_calls.push(CommandRef {
+                name: cmd.as_str().to_string(),
+                line,
+            });
+        }
     }
 
     let mut reexports = Vec::new();
@@ -419,6 +795,8 @@ fn analyze_js_file(
         reexports,
         dynamic_imports,
         exports,
+        command_calls,
+        command_handlers: Vec::new(),
     }
 }
 
@@ -438,6 +816,121 @@ fn analyze_css_file(content: &str, relative: String) -> FileAnalysis {
         reexports: Vec::new(),
         dynamic_imports: Vec::new(),
         exports: Vec::new(),
+        command_calls: Vec::new(),
+        command_handlers: Vec::new(),
+    }
+}
+
+fn analyze_py_file(
+    content: &str,
+    path: &Path,
+    root: &Path,
+    extensions: Option<&HashSet<String>>,
+    relative: String,
+) -> FileAnalysis {
+    let mut imports = Vec::new();
+    let mut reexports = Vec::new();
+    let mut dynamic_imports = Vec::new();
+    let mut exports = Vec::new();
+
+    for line in content.lines() {
+        let without_comment = line.split('#').next().unwrap_or("").trim_end();
+        let trimmed = without_comment.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("import ") {
+            for part in rest.split(',') {
+                let mut name = part.trim();
+                if let Some((lhs, _)) = name.split_once(" as ") {
+                    name = lhs.trim();
+                }
+                if !name.is_empty() {
+                    imports.push(ImportEntry {
+                        source: name.to_string(),
+                        kind: ImportKind::Static,
+                    });
+                }
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("from ") {
+            if let Some((module, names_raw)) = rest.split_once(" import ") {
+                let module = module.trim().trim_end_matches('.');
+                let names_clean = names_raw.trim().trim_matches('(').trim_matches(')');
+                let names_clean = names_clean.split('#').next().unwrap_or("").trim();
+                if !module.is_empty() {
+                    imports.push(ImportEntry {
+                        source: module.to_string(),
+                        kind: ImportKind::Static,
+                    });
+                }
+                if names_clean == "*" {
+                    let resolved = resolve_python_relative(module, path, root, extensions);
+                    reexports.push(ReexportEntry {
+                        source: module.to_string(),
+                        kind: ReexportKind::Star,
+                        resolved,
+                    });
+                }
+            }
+        }
+    }
+
+    for caps in regex_py_dynamic_importlib().captures_iter(content) {
+        if let Some(m) = caps.get(1) {
+            dynamic_imports.push(m.as_str().to_string());
+        }
+    }
+    for caps in regex_py_dynamic_dunder().captures_iter(content) {
+        if let Some(m) = caps.get(1) {
+            dynamic_imports.push(m.as_str().to_string());
+        }
+    }
+
+    for caps in regex_py_all().captures_iter(content) {
+        let body = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        for item in body.split(',') {
+            let trimmed = item.trim();
+            let name = trimmed
+                .trim_matches(|c| c == '\'' || c == '"')
+                .trim()
+                .to_string();
+            if !name.is_empty() {
+                exports.push(ExportSymbol {
+                    name,
+                    kind: "__all__".to_string(),
+                });
+            }
+        }
+    }
+
+    for caps in regex_py_def().captures_iter(content) {
+        if let Some(name) = caps.get(1) {
+            let n = name.as_str();
+            if !n.starts_with('_') {
+                exports.push(ExportSymbol {
+                    name: n.to_string(),
+                    kind: "def".to_string(),
+                });
+            }
+        }
+    }
+    for caps in regex_py_class().captures_iter(content) {
+        if let Some(name) = caps.get(1) {
+            let n = name.as_str();
+            if !n.starts_with('_') {
+                exports.push(ExportSymbol {
+                    name: n.to_string(),
+                    kind: "class".to_string(),
+                });
+            }
+        }
+    }
+
+    FileAnalysis {
+        path: relative,
+        imports,
+        reexports,
+        dynamic_imports,
+        exports,
+        command_calls: Vec::new(),
+        command_handlers: Vec::new(),
     }
 }
 
@@ -550,12 +1043,25 @@ fn analyze_rust_file(content: &str, relative: String) -> FileAnalysis {
         }
     }
 
+    let mut command_handlers = Vec::new();
+    for caps in regex_tauri_command_fn().captures_iter(content) {
+        if let Some(name) = caps.get(1) {
+            let line = offset_to_line(content, name.start());
+            command_handlers.push(CommandRef {
+                name: name.as_str().to_string(),
+                line,
+            });
+        }
+    }
+
     FileAnalysis {
         path: relative,
         imports,
         reexports,
         dynamic_imports: Vec::new(),
         exports,
+        command_calls: Vec::new(),
+        command_handlers,
     }
 }
 
@@ -579,6 +1085,7 @@ fn analyze_file(
     let analysis = match ext.as_str() {
         "rs" => analyze_rust_file(&content, relative),
         "css" => analyze_css_file(&content, relative),
+        "py" => analyze_py_file(&content, path, root, extensions, relative),
         _ => analyze_js_file(&content, path, root, extensions, relative),
     };
 
@@ -595,6 +1102,27 @@ fn is_dev_file(path: &str) -> bool {
 pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Result<()> {
     let mut json_results = Vec::new();
     let mut report_sections: Vec<ReportSection> = Vec::new();
+    let mut server_handle = None;
+    let ignore_symbols: HashSet<String> = parsed
+        .ignore_symbols
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.to_lowercase())
+        .collect();
+
+    if parsed.serve {
+        if let Some((port, handle)) =
+            start_open_server(root_list.to_vec(), parsed.editor_cmd.clone())
+        {
+            let base = format!("http://127.0.0.1:{port}");
+            let _ = OPEN_SERVER_BASE.set(base.clone());
+            server_handle = Some(handle);
+            eprintln!("[loctree] local open server at {}", base);
+        } else {
+            eprintln!("[loctree][warn] could not start open server; continue without --serve");
+        }
+    }
 
     for (idx, root_path) in root_list.iter().enumerate() {
         let ignore_paths = normalise_ignore_patterns(&parsed.ignore_patterns, root_path);
@@ -616,6 +1144,8 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
             loc_threshold: parsed.loc_threshold,
             analyze_limit: parsed.analyze_limit,
             report_path: parsed.report_path.clone(),
+            serve: parsed.serve,
+            editor_cmd: parsed.editor_cmd.clone(),
         };
 
         let git_checker = if options.use_gitignore {
@@ -631,10 +1161,15 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
         let mut export_index: ExportIndex = HashMap::new();
         let mut reexport_edges: Vec<(String, Option<String>)> = Vec::new();
         let mut dynamic_summary: Vec<(String, Vec<String>)> = Vec::new();
+        let mut fe_commands: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+        let mut be_commands: HashMap<String, Vec<(String, usize)>> = HashMap::new();
 
         for file in files {
             let analysis = analyze_file(&file, root_path, options.extensions.as_ref())?;
             for exp in &analysis.exports {
+                if !ignore_symbols.is_empty() && ignore_symbols.contains(&exp.name.to_lowercase()) {
+                    continue;
+                }
                 export_index
                     .entry(exp.name.clone())
                     .or_default()
@@ -645,6 +1180,18 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
             }
             if !analysis.dynamic_imports.is_empty() {
                 dynamic_summary.push((analysis.path.clone(), analysis.dynamic_imports.clone()));
+            }
+            for call in &analysis.command_calls {
+                fe_commands
+                    .entry(call.name.clone())
+                    .or_default()
+                    .push((analysis.path.clone(), call.line));
+            }
+            for handler in &analysis.command_handlers {
+                be_commands
+                    .entry(handler.name.clone())
+                    .or_default()
+                    .push((analysis.path.clone(), handler.line));
             }
             analyses.push(analysis);
         }
@@ -693,6 +1240,30 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
         }
         ranked_dups.sort_by(|a, b| b.2.cmp(&a.2).then(b.1.len().cmp(&a.1.len())));
 
+        let missing_handlers: Vec<CommandGap> = fe_commands
+            .iter()
+            .filter(|(name, _)| !be_commands.contains_key(*name))
+            .map(|(name, locs)| CommandGap {
+                name: name.clone(),
+                locations: locs.clone(),
+            })
+            .collect();
+        let unused_handlers: Vec<CommandGap> = be_commands
+            .iter()
+            .filter(|(name, _)| !fe_commands.contains_key(*name))
+            .map(|(name, locs)| CommandGap {
+                name: name.clone(),
+                locations: locs.clone(),
+            })
+            .collect();
+
+        let mut section_open = None;
+        if options.report_path.is_some() && options.serve {
+            if let Some(base) = OPEN_SERVER_BASE.get() {
+                section_open = Some(base.clone());
+            }
+        }
+
         if options.report_path.is_some() {
             let mut sorted_dyn = dynamic_summary.clone();
             sorted_dyn.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
@@ -703,6 +1274,17 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                 cascades: cascades.clone(),
                 dynamic: sorted_dyn,
                 analyze_limit: options.analyze_limit,
+                missing_handlers: {
+                    let mut v = missing_handlers.clone();
+                    v.sort_by(|a, b| a.name.cmp(&b.name));
+                    v
+                },
+                unused_handlers: {
+                    let mut v = unused_handlers.clone();
+                    v.sort_by(|a, b| a.name.cmp(&b.name));
+                    v
+                },
+                open_base: section_open,
             });
         }
 
@@ -721,6 +1303,8 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                         }).collect::<Vec<_>>(),
                         "dynamicImports": a.dynamic_imports,
                         "exports": a.exports.iter().map(|e| json!({"name": e.name, "kind": e.kind})).collect::<Vec<_>>(),
+                        "commandCalls": a.command_calls.iter().map(|c| json!({"name": c.name, "line": c.line})).collect::<Vec<_>>(),
+                        "commandHandlers": a.command_handlers.iter().map(|c| json!({"name": c.name, "line": c.line})).collect::<Vec<_>>(),
                     })
                 })
                 .collect();
@@ -757,9 +1341,15 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                             "sources": sources,
                             "manySources": sources.len() > 5,
                             "selfImport": unique.len() < sources.len(),
-                        })
                     })
-                    .collect::<Vec<_>>(),
+                })
+                .collect::<Vec<_>>(),
+                "commands": {
+                    "frontend": fe_commands.iter().map(|(k,v)| json!({"name": k, "locations": v})).collect::<Vec<_>>(),
+                    "backend": be_commands.iter().map(|(k,v)| json!({"name": k, "locations": v})).collect::<Vec<_>>(),
+                    "missingHandlers": missing_handlers.iter().map(|g| json!({"name": g.name, "locations": g.locations})).collect::<Vec<_>>(),
+                    "unusedHandlers": unused_handlers.iter().map(|g| json!({"name": g.name, "locations": g.locations})).collect::<Vec<_>>(),
+                },
                 "files": files_json,
             });
 
@@ -830,6 +1420,30 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
             }
         }
 
+        if !missing_handlers.is_empty() || !unused_handlers.is_empty() {
+            println!("\nTauri command coverage:");
+            if !missing_handlers.is_empty() {
+                println!(
+                    "  Missing handlers (frontend calls without backend): {}",
+                    missing_handlers
+                        .iter()
+                        .map(|g| g.name.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            if !unused_handlers.is_empty() {
+                println!(
+                    "  Unused handlers (backend not called by FE): {}",
+                    unused_handlers
+                        .iter()
+                        .map(|g| g.name.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+        }
+
         println!("\nTip: rerun with --json for machine-readable output.");
     }
 
@@ -859,11 +1473,12 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
         let _ = limit;
     }
 
+    drop(server_handle);
     Ok(())
 }
 
 pub fn default_analyzer_exts() -> HashSet<String> {
-    ["ts", "tsx", "js", "jsx", "mjs", "cjs", "rs", "css"]
+    ["ts", "tsx", "js", "jsx", "mjs", "cjs", "rs", "css", "py"]
         .iter()
         .map(|s| s.to_string())
         .collect()
@@ -883,4 +1498,8 @@ pub fn brace_list_to_names(raw: &str) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn offset_to_line(content: &str, offset: usize) -> usize {
+    content[..offset].bytes().filter(|b| *b == b'\n').count() + 1
 }

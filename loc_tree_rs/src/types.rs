@@ -38,6 +38,9 @@ pub struct Options {
     pub loc_threshold: usize,
     pub analyze_limit: usize,
     pub report_path: Option<std::path::PathBuf>,
+    pub serve: bool,
+    #[allow(dead_code)]
+    pub editor_cmd: Option<String>,
 }
 
 pub struct LineEntry {
@@ -99,12 +102,20 @@ pub struct ExportSymbol {
 }
 
 #[derive(Clone)]
+pub struct CommandRef {
+    pub name: String,
+    pub line: usize,
+}
+
+#[derive(Clone)]
 pub struct FileAnalysis {
     pub path: String,
     pub imports: Vec<ImportEntry>,
     pub reexports: Vec<ReexportEntry>,
     pub dynamic_imports: Vec<String>,
     pub exports: Vec<ExportSymbol>,
+    pub command_calls: Vec<CommandRef>,
+    pub command_handlers: Vec<CommandRef>,
 }
 
 // Convenience type aliases reused across modules
