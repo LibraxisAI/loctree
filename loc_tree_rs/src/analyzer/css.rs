@@ -14,6 +14,7 @@ pub(crate) fn analyze_css_file(content: &str, relative: String) -> FileAnalysis 
 
     FileAnalysis {
         path: relative,
+        loc: 0,
         imports,
         reexports: Vec::new(),
         dynamic_imports: Vec::new(),

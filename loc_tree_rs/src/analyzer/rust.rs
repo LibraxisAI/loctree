@@ -129,6 +129,7 @@ pub(crate) fn analyze_rust_file(content: &str, relative: String) -> FileAnalysis
 
     FileAnalysis {
         path: relative,
+        loc: 0,
         imports,
         reexports,
         dynamic_imports: Vec::new(),

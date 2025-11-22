@@ -223,7 +223,13 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
     container.parentNode.insertBefore(hint, container);
 
     const buildElements = () => {
-      const nodes = Array.from(new Set([].concat(g.nodes || []))).map(n => ({ data: { id: n, label: n }}));
+      const nodes = (g.nodes || []).map(n => {
+        const size = Math.max(4, Math.min(30, Math.sqrt(n.loc || 1)));
+        return {
+          data: { id: n.id, label: n.label, loc: n.loc || 0, size, full: n.id },
+          position: { x: n.x || 0, y: n.y || 0 }
+        };
+      });
       const edges = (g.edges || []).map((e, idx) => {
         const kind = e[2] || 'import';
         const color = kind === 'reexport' ? '#e67e22' : '#888';
@@ -239,10 +245,10 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
       container,
       elements: original,
       style: [
-        { selector: 'node', style: { 'label': 'data(label)', 'font-size': 10, 'text-wrap': 'wrap', 'text-max-width': 120, 'background-color': '#4f81e1', 'color': '#fff', 'width': 22, 'height': 22 } },
-        { selector: 'edge', style: { 'curve-style': 'bezier', 'width': 1.5, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.8, 'label': 'data(label)', 'font-size': 9, 'text-background-color': '#fff', 'text-background-opacity': 0.8, 'text-background-padding': 2 } }
+        { selector: 'node', style: { 'label': 'data(label)', 'font-size': 10, 'text-wrap': 'wrap', 'text-max-width': 120, 'background-color': '#4f81e1', 'color': '#fff', 'width': 'data(size)', 'height': 'data(size)' } },
+        { selector: 'edge', style: { 'curve-style': 'bezier', 'width': 1.2, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.7, 'label': 'data(label)', 'font-size': 9, 'text-background-color': '#fff', 'text-background-opacity': 0.8, 'text-background-padding': 2 } }
       ],
-      layout: { name: 'cose', idealEdgeLength: 120, nodeOverlap: 8, padding: 20 }
+      layout: { name: 'preset', animate: false, fit: true }
     });
 
     const applyFilters = () => {
@@ -267,6 +273,11 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
         edges = edges.filter(e => filteredSet.has(e.data.source) && filteredSet.has(e.data.target));
       }
 
+      if (nodes.length === 0) {
+        container.innerHTML = '<div class="graph-empty">Brak węzłów po filtrze</div>';
+        return;
+      }
+
       cy.elements().remove();
       cy.add({ nodes, edges });
 
@@ -277,12 +288,35 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
         .selector('node').style('label', labelsOn ? 'data(label)' : '')
         .update();
 
-      if (nodes.length === 0) {
-        container.innerHTML = '<div class="graph-empty">Brak węzłów po filtrze</div>';
-        return;
-      }
-      cy.layout({ name: 'cose', idealEdgeLength: 120, nodeOverlap: 8, padding: 20 }).run();
+      cy.layout({ name: 'preset', animate: false, fit: true }).run();
     };
+
+    // Tooltip on hover/click
+    const tooltip = document.createElement('div');
+    tooltip.style.position = 'fixed';
+    tooltip.style.pointerEvents = 'none';
+    tooltip.style.background = '#111';
+    tooltip.style.color = '#fff';
+    tooltip.style.padding = '6px 8px';
+    tooltip.style.borderRadius = '6px';
+    tooltip.style.fontSize = '12px';
+    tooltip.style.display = 'none';
+    tooltip.style.zIndex = 9999;
+    document.body.appendChild(tooltip);
+
+    const showTip = (evt, node) => {
+        const data = node.data();
+        tooltip.innerHTML = `<strong>${data.full || data.id}</strong><br/>LOC: ${data.loc || 0}`;
+        tooltip.style.left = (evt.renderedPosition.x + 12) + 'px';
+        tooltip.style.top = (evt.renderedPosition.y + 12) + 'px';
+        tooltip.style.display = 'block';
+    };
+    const hideTip = () => { tooltip.style.display = 'none'; };
+
+    cy.on('mouseover', 'node', (evt) => showTip(evt, evt.target));
+    cy.on('mouseout', 'node', hideTip);
+    cy.on('tap', 'node', (evt) => showTip(evt, evt.target));
+    cy.on('tapdrag', 'node', hideTip);
 
     toolbar.querySelectorAll('input').forEach(inp => {
       inp.addEventListener('input', () => applyFilters());

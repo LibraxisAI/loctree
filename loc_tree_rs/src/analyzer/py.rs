@@ -114,6 +114,7 @@ pub(crate) fn analyze_py_file(
 
     FileAnalysis {
         path: relative,
+        loc: 0,
         imports,
         reexports,
         dynamic_imports,

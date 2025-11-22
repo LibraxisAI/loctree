@@ -1,12 +1,23 @@
+use serde::Serialize;
+
 #[derive(Clone)]
 pub struct CommandGap {
     pub name: String,
     pub locations: Vec<(String, usize)>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub label: String,
+    pub loc: usize,
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Clone, Serialize)]
 pub struct GraphData {
-    pub nodes: Vec<String>,
+    pub nodes: Vec<GraphNode>,
     pub edges: Vec<(String, String, String)>, // from, to, kind
 }
 

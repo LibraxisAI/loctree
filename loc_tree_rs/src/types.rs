@@ -110,6 +110,7 @@ pub struct CommandRef {
 #[derive(Clone)]
 pub struct FileAnalysis {
     pub path: String,
+    pub loc: usize,
     pub imports: Vec<ImportEntry>,
     pub reexports: Vec<ReexportEntry>,
     pub dynamic_imports: Vec<String>,

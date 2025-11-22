@@ -17,13 +17,69 @@ use super::open_server::{current_open_base, open_in_browser, start_open_server};
 use super::py::analyze_py_file;
 use super::resolvers::{resolve_js_relative, resolve_python_relative};
 use super::rust::analyze_rust_file;
-use super::{CommandGap, GraphData, RankedDup, ReportSection};
+use super::{CommandGap, GraphData, GraphNode, RankedDup, ReportSection};
 
 fn is_dev_file(path: &str) -> bool {
     path.contains("__tests__")
         || path.contains("stories")
         || path.contains(".stories.")
         || path.contains("story.")
+}
+
+fn layout_positions(
+    nodes: &[String],
+    edges: &[(String, String, String)],
+) -> HashMap<String, (f32, f32)> {
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    for n in nodes {
+        adj.entry(n.clone()).or_default();
+    }
+    for (a, b, _) in edges {
+        adj.entry(a.clone()).or_default().push(b.clone());
+        adj.entry(b.clone()).or_default().push(a.clone());
+    }
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut comps: Vec<Vec<String>> = Vec::new();
+    for n in nodes {
+        if visited.contains(n) {
+            continue;
+        }
+        let mut stack = vec![n.clone()];
+        let mut comp = Vec::new();
+        visited.insert(n.clone());
+        while let Some(cur) = stack.pop() {
+            comp.push(cur.clone());
+            if let Some(neigh) = adj.get(&cur) {
+                for nb in neigh {
+                    if visited.insert(nb.clone()) {
+                        stack.push(nb.clone());
+                    }
+                }
+            }
+        }
+        comps.push(comp);
+    }
+
+    let cols = (comps.len() as f32).sqrt().ceil() as usize + 1;
+    let spacing = 1200f32;
+    let mut positions: HashMap<String, (f32, f32)> = HashMap::new();
+    for (idx, comp) in comps.iter().enumerate() {
+        let row = idx / cols;
+        let col = idx % cols;
+        let cx = (col as f32) * spacing;
+        let cy = (row as f32) * spacing;
+        let n = comp.len().max(1) as f32;
+        let radius = 160.0 + 30.0 * n.sqrt();
+        for (i, node) in comp.iter().enumerate() {
+            let theta = (i as f32) * (std::f32::consts::TAU / n);
+            let jitter = 12.0 * (i as f32 % 3.0) - 12.0;
+            let x = cx + radius * theta.cos() + jitter;
+            let y = cy + radius * theta.sin() - jitter;
+            positions.insert(node.clone(), (x, y));
+        }
+    }
+    positions
 }
 
 fn build_globset(patterns: &[String]) -> Option<GlobSet> {
@@ -73,18 +129,20 @@ fn analyze_file(
         .unwrap_or(path)
         .to_string_lossy()
         .to_string();
+    let loc = content.lines().count();
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
 
-    let analysis = match ext.as_str() {
+    let mut analysis = match ext.as_str() {
         "rs" => analyze_rust_file(&content, relative),
         "css" => analyze_css_file(&content, relative),
         "py" => analyze_py_file(&content, path, root, extensions, relative),
         _ => analyze_js_file(&content, path, root, extensions, relative),
     };
+    analysis.loc = loc;
 
     Ok(analysis)
 }
@@ -188,9 +246,11 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
         let mut fe_commands: HashMap<String, Vec<(String, usize)>> = HashMap::new();
         let mut be_commands: HashMap<String, Vec<(String, usize)>> = HashMap::new();
         let mut graph_edges: Vec<(String, String, String)> = Vec::new();
+        let mut loc_map: HashMap<String, usize> = HashMap::new();
 
         for file in files {
             let analysis = analyze_file(&file, root_path, options.extensions.as_ref())?;
+            loc_map.insert(analysis.path.clone(), analysis.loc);
             for exp in &analysis.exports {
                 let name_lc = exp.name.to_lowercase();
                 let ignored = ignore_exact.contains(&name_lc)
@@ -419,8 +479,25 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                         nodes.insert(a.clone());
                         nodes.insert(b.clone());
                     }
+                    let nodes_vec: Vec<String> = nodes.into_iter().collect();
+                    let positions = layout_positions(&nodes_vec, &graph_edges);
+                    let graph_nodes: Vec<GraphNode> = nodes_vec
+                        .iter()
+                        .map(|id| {
+                            let (x, y) = positions.get(id).cloned().unwrap_or((0.0, 0.0));
+                            let loc = loc_map.get(id).cloned().unwrap_or(0);
+                            let label = id.rsplit('/').next().unwrap_or(id.as_str()).to_string();
+                            GraphNode {
+                                id: id.clone(),
+                                label,
+                                loc,
+                                x,
+                                y,
+                            }
+                        })
+                        .collect();
                     Some(GraphData {
-                        nodes: nodes.into_iter().collect(),
+                        nodes: graph_nodes,
                         edges: graph_edges.clone(),
                     })
                 } else {

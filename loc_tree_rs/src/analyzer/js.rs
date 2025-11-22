@@ -126,6 +126,7 @@ pub(crate) fn analyze_js_file(
 
     FileAnalysis {
         path: relative,
+        loc: 0,
         imports,
         reexports,
         dynamic_imports,
