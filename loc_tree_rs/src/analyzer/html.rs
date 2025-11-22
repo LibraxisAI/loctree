@@ -42,11 +42,18 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
 .command-list{margin:0;padding-left:1.1rem;columns:2;column-gap:1.4rem;list-style:disc;}
 .command-list li{break-inside:avoid;word-break:break-word;margin-bottom:4px;}
 .graph-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0 4px;}
-.graph-toolbar label{font-size:13px;color:#444;display:flex;align-items:center;gap:4px;}
-.graph-legend{font-size:13px;color:#444;display:flex;gap:12px;align-items:center;}
+.graph-toolbar label,.graph-legend{font-size:13px;color:#444;display:flex;align-items:center;gap:8px;}
+.graph-legend{gap:12px;}
 .legend-dot{width:12px;height:12px;border-radius:50%;display:inline-block;}
 .graph-hint{font-size:12px;color:#555;margin:2px 0 6px;}
 .graph-empty{font-size:13px;color:#777;text-align:center;padding:24px;}
+.graph-controls button{font-size:12px;padding:4px 8px;border:1px solid #ccc;background:#f8f8f8;border-radius:6px;cursor:pointer;}
+.graph-controls button:hover{background:#eee;}
+.dark body{background:#0f1115;color:#d7dde5;}
+.dark table th{background:#1c2029;color:#d7dde5;}
+.dark table td{background:#0f1115;color:#d7dde5;border-color:#2a2f3a;}
+.dark code{background:#1c2029;color:#f0f4ff;}
+.dark .graph{border-color:#2a2f3a;}
 </style>
 </head><body>
 <h1>loctree import/export analysis</h1>
@@ -210,6 +217,12 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
         <input type="number" min="0" value="0" style="width:60px" data-role="min-degree" />
       </label>
       <label><input type="checkbox" data-role="toggle-labels" checked /> labels</label>
+      <span class="graph-controls">
+        <button data-role="fit">fit</button>
+        <button data-role="reset">reset</button>
+        <label><input type="checkbox" data-role="dark" /> dark</label>
+        <button data-role="fullscreen">fullscreen</button>
+      </span>
       <div class="graph-legend">
         <span><span class="legend-dot" style="background:#4f81e1"></span> file</span>
         <span><span class="legend-dot" style="background:#888"></span> import</span>
@@ -223,15 +236,17 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
     container.parentNode.insertBefore(hint, container);
 
     const buildElements = () => {
-      const nodes = (g.nodes || []).map(n => {
-        const size = Math.max(4, Math.min(30, Math.sqrt(n.loc || 1)));
+      const rawNodes = Array.isArray(g.nodes) ? g.nodes : [];
+      const rawEdges = Array.isArray(g.edges) ? g.edges : [];
+      const nodes = rawNodes.map(n => {
+        const size = Math.max(4, Math.min(30, Math.sqrt((n && n.loc) || 1)));
         return {
-          data: { id: n.id, label: n.label, loc: n.loc || 0, size, full: n.id },
+          data: { id: n.id || '', label: n.label || n.id || '', loc: n.loc || 0, size, full: n.id || '' },
           position: { x: n.x || 0, y: n.y || 0 }
         };
       });
-      const edges = (g.edges || []).map((e, idx) => {
-        const kind = e[2] || 'import';
+      const edges = rawEdges.map((e, idx) => {
+        const kind = (e && e[2]) || 'import';
         const color = kind === 'reexport' ? '#e67e22' : '#888';
         return {
           data: { id: 'e'+idx, source: e[0], target: e[1], label: kind, color }
@@ -241,12 +256,16 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
     };
 
     const original = buildElements();
+    const emptyOverlay = document.createElement('div');
+    emptyOverlay.className = 'graph-empty';
+    emptyOverlay.style.display = 'none';
+    container.appendChild(emptyOverlay);
     let cy = cytoscape({
       container,
       elements: original,
       style: [
         { selector: 'node', style: { 'label': 'data(label)', 'font-size': 10, 'text-wrap': 'wrap', 'text-max-width': 120, 'background-color': '#4f81e1', 'color': '#fff', 'width': 'data(size)', 'height': 'data(size)' } },
-        { selector: 'edge', style: { 'curve-style': 'bezier', 'width': 1.2, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.7, 'label': 'data(label)', 'font-size': 9, 'text-background-color': '#fff', 'text-background-opacity': 0.8, 'text-background-padding': 2 } }
+        { selector: 'edge', style: { 'curve-style': 'bezier', 'width': 1.1, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.7, 'label': '', 'font-size': 9, 'text-background-color': '#fff', 'text-background-opacity': 0.8, 'text-background-padding': 2 } }
       ],
       layout: { name: 'preset', animate: false, fit: true }
     });
@@ -255,12 +274,16 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
       const text = (toolbar.querySelector('[data-role="filter-text"]')?.value || '').toLowerCase();
       const minDeg = parseInt(toolbar.querySelector('[data-role="min-degree"]')?.value || '0', 10) || 0;
 
-      let nodes = original.nodes;
+      let nodes = original.nodes.map(n => ({
+        data: { ...n.data },
+        position: { ...n.position }
+      }));
       if (text) {
-        nodes = nodes.filter(n => n.data.id.toLowerCase().includes(text));
+        nodes = nodes.filter(n => (n.data.id || '').toLowerCase().includes(text));
       }
       const nodeSet = new Set(nodes.map(n => n.data.id));
-      let edges = original.edges.filter(e => nodeSet.has(e.data.source) && nodeSet.has(e.data.target));
+      let edges = original.edges.map(e => ({ data: { ...e.data } }));
+      edges = edges.filter(e => nodeSet.has(e.data.source) && nodeSet.has(e.data.target));
 
       if (minDeg > 0) {
         const deg = {};
@@ -274,9 +297,11 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
       }
 
       if (nodes.length === 0) {
-        container.innerHTML = '<div class="graph-empty">Brak węzłów po filtrze</div>';
+        emptyOverlay.style.display = 'block';
+        cy.elements().remove();
         return;
       }
+      emptyOverlay.style.display = 'none';
 
       cy.elements().remove();
       cy.add({ nodes, edges });
@@ -290,6 +315,44 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
 
       cy.layout({ name: 'preset', animate: false, fit: true }).run();
     };
+
+    // Fit / reset / dark / fullscreen
+    const fitBtn = toolbar.querySelector('[data-role="fit"]');
+    const resetBtn = toolbar.querySelector('[data-role="reset"]');
+    const darkChk = toolbar.querySelector('[data-role="dark"]');
+    const fsBtn = toolbar.querySelector('[data-role="fullscreen"]');
+
+    if (fitBtn) fitBtn.addEventListener('click', () => cy.fit());
+    if (resetBtn) resetBtn.addEventListener('click', () => {
+      cy.elements().remove();
+      cy.add(original);
+      cy.layout({ name: 'preset', animate: false, fit: true }).run();
+      applyFilters();
+    });
+
+    const applyDark = (on) => {
+      document.documentElement.classList.toggle('dark', on);
+      cy.style()
+        .selector('node').style('color', on ? '#eef2ff' : '#fff').update()
+        .selector('edge').style('text-background-color', on ? '#0f1115' : '#fff').update();
+    };
+    if (darkChk) {
+      darkChk.addEventListener('change', () => applyDark(darkChk.checked));
+    }
+
+    const containerParent = container.parentNode;
+    if (fsBtn && containerParent && containerParent.requestFullscreen) {
+      fsBtn.addEventListener('click', () => {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else {
+          containerParent.requestFullscreen().catch(()=>{});
+        }
+      });
+      document.addEventListener('fullscreenchange', () => {
+        fsBtn.textContent = document.fullscreenElement ? 'exit fullscreen' : 'fullscreen';
+      });
+    }
 
     // Tooltip on hover/click
     const tooltip = document.createElement('div');
