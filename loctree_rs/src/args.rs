@@ -27,7 +27,6 @@ pub struct ParsedArgs {
     pub analyze_limit: usize,
     pub report_path: Option<PathBuf>,
     pub serve: bool,
-    pub serve_keepalive: bool,
     pub editor_cmd: Option<String>,
 }
 
@@ -57,7 +56,6 @@ impl Default for ParsedArgs {
             analyze_limit: 8,
             report_path: None,
             serve: false,
-            serve_keepalive: false,
             editor_cmd: None,
         }
     }
@@ -196,6 +194,13 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
             }
             "--json" => {
                 parsed.output = OutputMode::Json;
+                if let Some(next) = args.get(i + 1) {
+                    if !next.starts_with('-') {
+                        parsed.json_output_path = Some(PathBuf::from(next));
+                        i += 2;
+                        continue;
+                    }
+                }
                 i += 1;
             }
             "--json-out" | "--json-output" => {
@@ -217,13 +222,8 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
                 parsed.report_path = Some(PathBuf::from(next));
                 i += 2;
             }
-            "--serve" => {
+            "--serve" | "--serve-keepalive" | "--serve-wait" => {
                 parsed.serve = true;
-                i += 1;
-            }
-            "--serve-keepalive" | "--serve-wait" => {
-                parsed.serve = true;
-                parsed.serve_keepalive = true;
                 i += 1;
             }
             "--editor-cmd" => {

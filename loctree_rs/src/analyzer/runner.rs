@@ -805,11 +805,9 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
 
     drop(server_handle);
 
-    if parsed.serve && parsed.serve_keepalive {
+    if parsed.serve {
         use std::io::Read;
-        eprintln!(
-            "[loctree] --serve-keepalive: wciśnij Enter (Ctrl+C aby przerwać) aby zakończyć serwer"
-        );
+        eprintln!("[loctree] --serve: wciśnij Enter (Ctrl+C aby przerwać) aby zakończyć serwer");
         let _ = std::io::stdin().read(&mut [0u8]).ok();
     }
     Ok(())
