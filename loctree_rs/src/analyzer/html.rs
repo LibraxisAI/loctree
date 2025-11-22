@@ -92,6 +92,25 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
             section.files_analyzed
         ));
 
+        // AI Insights
+        if !section.insights.is_empty() {
+            out.push_str("<h3>AI Insights</h3><ul class=\"command-list\">");
+            for insight in &section.insights {
+                 let color = match insight.severity.as_str() {
+                     "high" => "#e74c3c",
+                     "medium" => "#e67e22",
+                     _ => "#3498db",
+                 };
+                 out.push_str(&format!(
+                     "<li><strong style=\"color:{}\">{}</strong>: {}</li>",
+                     color,
+                     escape_html(&insight.title),
+                     escape_html(&insight.message)
+                 ));
+            }
+            out.push_str("</ul>");
+        }
+
         // Duplicate exports
         out.push_str("<h3>Top duplicate exports</h3>");
         if section.ranked_dups.is_empty() {
@@ -161,13 +180,13 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
                 for g in gaps {
                     let module = g
                         .locations
-                        .get(0)
+                        .first()
                         .map(|(p, _)| {
                             let parts: Vec<&str> = p.split('/').collect();
                             if parts.len() >= 2 {
                                 format!("{}/{}", parts[0], parts[1])
                             } else {
-                                parts.get(0).unwrap_or(&"").to_string()
+                                parts.first().unwrap_or(&"").to_string()
                             }
                         })
                         .unwrap_or_else(|| "".to_string());
@@ -176,9 +195,21 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
                         .iter()
                         .map(|(f, l)| linkify(section.open_base.as_deref(), f, *l))
                         .collect();
+                    
+                    let alias_info = if let Some(impl_name) = &g.implementation_name {
+                         if impl_name != &g.name {
+                             format!(" <span class=\"muted\">(impl: {})</span>", escape_html(impl_name))
+                         } else {
+                             String::new()
+                         }
+                    } else {
+                         String::new()
+                    };
+
                     let pill = format!(
-                        "<span class=\"command-pill\"><code>{}</code></span> <span class=\"muted\">{}</span>",
+                        "<span class=\"command-pill\"><code>{}</code>{}</span> <span class=\"muted\">{}</span>",
                         escape_html(&g.name),
+                        alias_info,
                         locs.join(", ")
                     );
                     groups.entry(module).or_default().push(pill);
@@ -340,7 +371,8 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
       layout: { name: 'preset', animate: false, fit: true }
       });
 
-    const downloadBlob = (filename, blob) => {
+    const download = (filename, content, type) => {
+      const blob = new Blob([content], { type });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; a.download = filename;
@@ -463,7 +495,7 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
     // Tooltip on hover/click
     const tooltip = document.createElement('div');
     tooltip.style.position = 'fixed';
-    tooltip.style.pointerEvents = 'none';
+    tooltip.style.pointerEvents = 'auto';
     tooltip.style.background = '#111';
     tooltip.style.color = '#fff';
     tooltip.style.padding = '6px 8px';
@@ -475,7 +507,12 @@ code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
 
     const showTip = (evt, node) => {
         const data = node.data();
-        tooltip.innerHTML = `<strong>${data.full || data.id}</strong><br/>LOC: ${data.loc || 0}`;
+        const path = data.full || data.id;
+        tooltip.innerHTML = `
+            <div style="margin-bottom:4px"><strong>${path}</strong></div>
+            <div>LOC: ${data.loc || 0}</div>
+            <button style="margin-top:4px;font-size:10px;cursor:pointer" onclick="navigator.clipboard.writeText('${path}')">copy path</button>
+        `;
         const rect = container.getBoundingClientRect();
         const scrollX = window.scrollX || document.documentElement.scrollLeft || 0;
         const scrollY = window.scrollY || document.documentElement.scrollTop || 0;

@@ -18,7 +18,7 @@ use super::open_server::{current_open_base, open_in_browser, start_open_server};
 use super::py::analyze_py_file;
 use super::resolvers::{resolve_js_relative, resolve_python_relative};
 use super::rust::analyze_rust_file;
-use super::{CommandGap, GraphData, GraphNode, RankedDup, ReportSection};
+use super::{AiInsight, CommandGap, GraphData, GraphNode, RankedDup, ReportSection};
 
 const MAX_GRAPH_NODES: usize = 8000;
 const MAX_GRAPH_EDGES: usize = 12000;
@@ -134,25 +134,26 @@ fn build_globset(patterns: &[String]) -> Option<GlobSet> {
 }
 
 fn strip_excluded_paths(
-    paths: &[(String, usize)],
+    paths: &[(String, usize, String)],
     focus: &Option<GlobSet>,
     exclude: &Option<GlobSet>,
 ) -> Vec<(String, usize)> {
     paths
         .iter()
-        .filter(|(p, _)| {
+        .filter_map(|(p, line, _)| {
             let pb = Path::new(p);
             if let Some(ex) = exclude {
                 if ex.is_match(pb) {
-                    return false;
+                    return None;
                 }
             }
             if let Some(focus_globs) = focus {
-                return focus_globs.is_match(pb);
+                if !focus_globs.is_match(pb) {
+                    return None;
+                }
             }
-            true
+            Some((p.clone(), *line))
         })
-        .cloned()
         .collect()
 }
 
@@ -208,6 +209,68 @@ pub fn default_analyzer_exts() -> HashSet<String> {
         .iter()
         .map(|s| s.to_string())
         .collect()
+}
+
+fn collect_ai_insights(
+    files: &[FileAnalysis],
+    dups: &[RankedDup],
+    cascades: &[(String, String)],
+    gap_missing: &[CommandGap],
+    _gap_unused: &[CommandGap],
+) -> Vec<AiInsight> {
+    let mut insights = Vec::new();
+
+    // 1. Huge files
+    let huge_files: Vec<_> = files.iter().filter(|f| f.loc > 2000).collect();
+    if !huge_files.is_empty() {
+        insights.push(AiInsight {
+            title: "Huge files detected".to_string(),
+            severity: "medium".to_string(),
+            message: format!(
+                "Found {} files with > 2000 LOC (e.g. {}). Consider splitting them.",
+                huge_files.len(),
+                huge_files[0].path
+            ),
+        });
+    }
+
+    // 2. Many duplicates
+    if dups.len() > 10 {
+        insights.push(AiInsight {
+            title: "High number of duplicate exports".to_string(),
+            severity: "medium".to_string(),
+            message: format!(
+                "Found {} duplicate export groups. Consider refactoring.",
+                dups.len()
+            ),
+        });
+    }
+
+    // 3. Cascades
+    if cascades.len() > 20 {
+        insights.push(AiInsight {
+            title: "Many re-export chains".to_string(),
+            severity: "low".to_string(),
+            message: format!(
+                "Found {} re-export cascades. This might affect tree-shaking/bundling.",
+                cascades.len()
+            ),
+        });
+    }
+
+    // 4. Missing handlers
+    if !gap_missing.is_empty() {
+        insights.push(AiInsight {
+            title: "Missing Tauri Handlers".to_string(),
+            severity: "high".to_string(),
+            message: format!(
+                "Frontend calls {} commands that are missing in Backend.",
+                gap_missing.len()
+            ),
+        });
+    }
+
+    insights
 }
 
 pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Result<()> {
@@ -299,8 +362,8 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
         let mut export_index: ExportIndex = HashMap::new();
         let mut reexport_edges: Vec<(String, Option<String>)> = Vec::new();
         let mut dynamic_summary: Vec<(String, Vec<String>)> = Vec::new();
-        let mut fe_commands: HashMap<String, Vec<(String, usize)>> = HashMap::new();
-        let mut be_commands: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+        let mut fe_commands: HashMap<String, Vec<(String, usize, String)>> = HashMap::new();
+        let mut be_commands: HashMap<String, Vec<(String, usize, String)>> = HashMap::new();
         let mut graph_edges: Vec<(String, String, String)> = Vec::new();
         let mut loc_map: HashMap<String, usize> = HashMap::new();
 
@@ -383,13 +446,14 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                 fe_commands
                     .entry(call.name.clone())
                     .or_default()
-                    .push((analysis.path.clone(), call.line));
+                    .push((analysis.path.clone(), call.line, call.name.clone()));
             }
             for handler in &analysis.command_handlers {
+                let key = handler.exposed_name.as_ref().unwrap_or(&handler.name);
                 be_commands
-                    .entry(handler.name.clone())
+                    .entry(key.clone())
                     .or_default()
-                    .push((analysis.path.clone(), handler.line));
+                    .push((analysis.path.clone(), handler.line, handler.name.clone()));
             }
             analyses.push(analysis);
         }
@@ -510,8 +574,12 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                 if kept.is_empty() {
                     None
                 } else {
+                    let impl_name = locs.iter()
+                        .find(|(p, l, _)| p == &kept[0].0 && *l == kept[0].1)
+                        .map(|(_, _, n)| n.clone());
                     Some(CommandGap {
                         name: name.clone(),
+                        implementation_name: impl_name,
                         locations: kept,
                     })
                 }
@@ -531,8 +599,12 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
                 if kept.is_empty() {
                     None
                 } else {
+                    let impl_name = locs.iter()
+                        .find(|(p, l, _)| p == &kept[0].0 && *l == kept[0].1)
+                        .map(|(_, _, n)| n.clone());
                     Some(CommandGap {
                         name: name.clone(),
+                        implementation_name: impl_name,
                         locations: kept,
                     })
                 }
@@ -547,7 +619,17 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
         if options.report_path.is_some() {
             let mut sorted_dyn = dynamic_summary.clone();
             sorted_dyn.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+            let insights = collect_ai_insights(
+                &analyses,
+                &filtered_ranked,
+                &cascades,
+                &missing_handlers,
+                &unused_handlers,
+            );
+
             report_sections.push(ReportSection {
+                insights,
                 root: root_path.display().to_string(),
                 files_analyzed: analyses.len(),
                 ranked_dups: filtered_ranked.clone(),

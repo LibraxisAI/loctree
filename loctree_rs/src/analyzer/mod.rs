@@ -30,5 +30,5 @@ pub(super) fn offset_to_line(content: &str, offset: usize) -> usize {
     content[..offset].bytes().filter(|b| *b == b'\n').count() + 1
 }
 
-pub use report::{CommandGap, GraphData, GraphNode, RankedDup, ReportSection};
+pub use report::{AiInsight, CommandGap, GraphData, GraphNode, RankedDup, ReportSection};
 pub use runner::run_import_analyzer;

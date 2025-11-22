@@ -8,6 +8,120 @@ use super::regexes::{
     rust_pub_decl_regexes,
 };
 
+fn split_words_lower(name: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut prev_lower = false;
+
+    for ch in name.chars() {
+        if ch == '_' || ch == '-' {
+            if !current.is_empty() {
+                words.push(current.to_lowercase());
+                current.clear();
+            }
+            prev_lower = false;
+            continue;
+        }
+
+        if ch.is_ascii_uppercase() && prev_lower && !current.is_empty() {
+            words.push(current.to_lowercase());
+            current.clear();
+        }
+
+        current.push(ch);
+        prev_lower = ch.is_ascii_lowercase();
+    }
+
+    if !current.is_empty() {
+        words.push(current.to_lowercase());
+    }
+
+    words.retain(|w| !w.is_empty());
+    words
+}
+
+fn capitalize(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+fn apply_rename_all(fn_name: &str, style: &str) -> String {
+    let words = split_words_lower(fn_name);
+    if words.is_empty() {
+        return fn_name.to_string();
+    }
+
+    match style {
+        "snake_case" => words.join("_"),
+        "kebab-case" => words.join("-"),
+        "camelCase" => {
+            let mut out = words[0].clone();
+            for w in words.iter().skip(1) {
+                out.push_str(&capitalize(w));
+            }
+            out
+        }
+        "PascalCase" | "UpperCamelCase" => {
+            let mut out = String::new();
+            for w in &words {
+                out.push_str(&capitalize(w));
+            }
+            out
+        }
+        "lowercase" => words.join("").to_lowercase(),
+        "UPPERCASE" => words.join("").to_uppercase(),
+        "SCREAMING_SNAKE_CASE" => words.join("_").to_uppercase(),
+        _ => fn_name.to_string(),
+    }
+}
+
+fn exposed_command_name(attr_raw: &str, fn_name: &str) -> String {
+    let inner = attr_raw
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .trim();
+
+    if inner.is_empty() {
+        return fn_name.to_string();
+    }
+
+    let mut rename: Option<String> = None;
+    let mut rename_all: Option<String> = None;
+
+    for part in inner.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Some((key, raw_val)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let val = raw_val.trim().trim_matches(['"', '\'']).to_string();
+            if val.is_empty() {
+                continue;
+            }
+            if key == "rename" {
+                rename = Some(val);
+            } else if key == "rename_all" {
+                rename_all = Some(val);
+            }
+        }
+    }
+
+    if let Some(explicit) = rename {
+        return explicit;
+    }
+    if let Some(style) = rename_all {
+        return apply_rename_all(fn_name, &style);
+    }
+
+    fn_name.to_string()
+}
+
 fn parse_rust_brace_names(raw: &str) -> Vec<String> {
     raw.split(',')
         .filter_map(|item| {
@@ -118,10 +232,17 @@ pub(crate) fn analyze_rust_file(content: &str, relative: String) -> FileAnalysis
 
     let mut command_handlers = Vec::new();
     for caps in regex_tauri_command_fn().captures_iter(content) {
-        if let Some(name) = caps.get(1) {
+        let attr_raw = caps.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+        let name_match = caps.get(2);
+
+        if let Some(name) = name_match {
+            let fn_name = name.as_str().to_string();
+            let exposed_name = exposed_command_name(attr_raw, &fn_name);
+
             let line = offset_to_line(content, name.start());
             command_handlers.push(CommandRef {
-                name: name.as_str().to_string(),
+                name: fn_name,
+                exposed_name: Some(exposed_name),
                 line,
             });
         }

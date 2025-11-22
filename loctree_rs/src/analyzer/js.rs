@@ -8,7 +8,7 @@ use crate::types::{
 use super::regexes::{
     regex_dynamic_import, regex_export_brace, regex_export_default, regex_export_named_decl,
     regex_import, regex_invoke_snake, regex_reexport_named, regex_reexport_star, regex_safe_invoke,
-    regex_side_effect_import,
+    regex_side_effect_import, regex_tauri_invoke,
 };
 use super::resolvers::resolve_reexport_target;
 use super::{brace_list_to_names, offset_to_line};
@@ -42,6 +42,17 @@ pub(crate) fn analyze_js_file(
             let line = offset_to_line(content, cmd.start());
             command_calls.push(CommandRef {
                 name: cmd.as_str().to_string(),
+                exposed_name: None,
+                line,
+            });
+        }
+    }
+    for caps in regex_tauri_invoke().captures_iter(content) {
+        if let Some(cmd) = caps.get(1) {
+            let line = offset_to_line(content, cmd.start());
+            command_calls.push(CommandRef {
+                name: cmd.as_str().to_string(),
+                exposed_name: None,
                 line,
             });
         }
@@ -51,6 +62,7 @@ pub(crate) fn analyze_js_file(
             let line = offset_to_line(content, cmd.start());
             command_calls.push(CommandRef {
                 name: cmd.as_str().to_string(),
+                exposed_name: None,
                 line,
             });
         }

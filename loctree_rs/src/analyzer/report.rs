@@ -3,7 +3,15 @@ use serde::Serialize;
 #[derive(Clone)]
 pub struct CommandGap {
     pub name: String,
+    pub implementation_name: Option<String>,
     pub locations: Vec<(String, usize)>,
+}
+
+#[derive(Clone)]
+pub struct AiInsight {
+    pub title: String,
+    pub severity: String,
+    pub message: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -44,4 +52,5 @@ pub struct ReportSection {
     pub command_counts: (usize, usize),
     pub open_base: Option<String>,
     pub graph: Option<GraphData>,
+    pub insights: Vec<AiInsight>,
 }

@@ -104,6 +104,7 @@ pub struct ExportSymbol {
 #[derive(Clone)]
 pub struct CommandRef {
     pub name: String,
+    pub exposed_name: Option<String>,
     pub line: usize,
 }
 

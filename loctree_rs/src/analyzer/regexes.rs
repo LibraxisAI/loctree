@@ -62,7 +62,16 @@ pub(crate) fn regex_invoke_snake() -> &'static Regex {
 pub(crate) fn regex_tauri_command_fn() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r#"(?m)#\s*\[\s*tauri::command[^\]]*\]\s*pub\s+async\s+fn\s+([A-Za-z0-9_]+)"#)
+        Regex::new(r#"(?m)#\s*\[\s*tauri::command([^\]]*)\]\s*(?:pub\s*(?:\([^)]*\)\s*)?)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)"#)
+            .unwrap()
+    })
+}
+
+pub(crate) fn regex_tauri_invoke() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // Matches top-level invoke("cmd") calls (avoids foo.invoke())
+        Regex::new(r#"(?m)(?:^|[^A-Za-z0-9_\.])invoke\(\s*[\"']([^\"']+)[\"']"#)
             .unwrap()
     })
 }
