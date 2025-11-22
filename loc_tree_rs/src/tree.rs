@@ -143,6 +143,7 @@ pub fn run_tree(root_list: &[PathBuf], parsed: &crate::args::ParsedArgs) -> io::
         show_hidden: parsed.show_hidden,
         loc_threshold: parsed.loc_threshold,
         analyze_limit: parsed.analyze_limit,
+        report_path: None,
     };
 
     let mut json_results = Vec::new();

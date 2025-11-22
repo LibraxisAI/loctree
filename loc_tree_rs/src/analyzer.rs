@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -12,6 +13,120 @@ use crate::types::{
     ExportIndex, ExportSymbol, FileAnalysis, ImportEntry, ImportKind, Options, OutputMode,
     ReexportEntry, ReexportKind,
 };
+
+type RankedDup = (
+    String,
+    Vec<String>,
+    usize,
+    usize,
+    usize,
+    String,
+    Vec<String>,
+);
+
+struct ReportSection {
+    root: String,
+    files_analyzed: usize,
+    ranked_dups: Vec<RankedDup>,
+    cascades: Vec<(String, String)>,
+    dynamic: Vec<(String, Vec<String>)>,
+    analyze_limit: usize,
+}
+
+fn escape_html(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn render_html_report(path: &Path, sections: &[ReportSection]) -> io::Result<()> {
+    let mut out = String::new();
+    out.push_str(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>loctree import/export report</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:24px;line-height:1.5;}
+h1,h2,h3{margin-bottom:0.2em;}
+table{border-collapse:collapse;width:100%;margin:0.5em 0;}
+th,td{border:1px solid #ddd;padding:6px 8px;font-size:14px;}
+th{background:#f5f5f5;text-align:left;}
+code{background:#f6f8fa;padding:2px 4px;border-radius:4px;}
+.muted{color:#666;}
+</style>
+</head><body>
+<h1>loctree import/export analysis</h1>
+"#,
+    );
+
+    for section in sections {
+        out.push_str(&format!(
+            "<h2>{}</h2><p class=\"muted\">Files analyzed: {}</p>",
+            escape_html(&section.root),
+            section.files_analyzed
+        ));
+
+        // Duplicate exports
+        out.push_str("<h3>Top duplicate exports</h3>");
+        if section.ranked_dups.is_empty() {
+            out.push_str("<p class=\"muted\">None</p>");
+        } else {
+            out.push_str("<table><tr><th>Symbol</th><th>Files</th><th>Prod</th><th>Dev</th><th>Canonical</th><th>Refactor targets</th></tr>");
+            for (name, files, _score, prod, dev, canonical, refactors) in
+                section.ranked_dups.iter().take(section.analyze_limit)
+            {
+                out.push_str(&format!(
+                    "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td><code>{}</code></td><td>{}</td></tr>",
+                    escape_html(name),
+                    files.len(),
+                    prod,
+                    dev,
+                    escape_html(canonical),
+                    escape_html(&refactors.join(", "))
+                ));
+            }
+            out.push_str("</table>");
+        }
+
+        // Cascades
+        out.push_str("<h3>Re-export cascades</h3>");
+        if section.cascades.is_empty() {
+            out.push_str("<p class=\"muted\">None</p>");
+        } else {
+            out.push_str("<ul>");
+            for (from, to) in &section.cascades {
+                out.push_str(&format!(
+                    "<li><code>{}</code> → <code>{}</code></li>",
+                    escape_html(from),
+                    escape_html(to)
+                ));
+            }
+            out.push_str("</ul>");
+        }
+
+        // Dynamic imports
+        out.push_str("<h3>Dynamic imports</h3>");
+        if section.dynamic.is_empty() {
+            out.push_str("<p class=\"muted\">None</p>");
+        } else {
+            out.push_str("<table><tr><th>File</th><th>Sources</th></tr>");
+            for (file, sources) in section.dynamic.iter().take(section.analyze_limit) {
+                out.push_str(&format!(
+                    "<tr><td><code>{}</code></td><td>{}</td></tr>",
+                    escape_html(file),
+                    escape_html(&sources.join(", "))
+                ));
+            }
+            out.push_str("</table>");
+        }
+    }
+
+    out.push_str("</body></html>");
+    fs::write(path, out)
+}
 
 fn regex_import() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -213,6 +328,7 @@ fn is_dev_file(path: &str) -> bool {
 
 pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Result<()> {
     let mut json_results = Vec::new();
+    let mut report_sections: Vec<ReportSection> = Vec::new();
 
     for (idx, root_path) in root_list.iter().enumerate() {
         let ignore_paths = normalise_ignore_patterns(&parsed.ignore_patterns, root_path);
@@ -233,6 +349,7 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
             show_hidden: parsed.show_hidden,
             loc_threshold: parsed.loc_threshold,
             analyze_limit: parsed.analyze_limit,
+            report_path: parsed.report_path.clone(),
         };
 
         let git_checker = if options.use_gitignore {
@@ -309,6 +426,19 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
             ));
         }
         ranked_dups.sort_by(|a, b| b.2.cmp(&a.2).then(b.1.len().cmp(&a.1.len())));
+
+        if options.report_path.is_some() {
+            let mut sorted_dyn = dynamic_summary.clone();
+            sorted_dyn.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+            report_sections.push(ReportSection {
+                root: root_path.display().to_string(),
+                files_analyzed: analyses.len(),
+                ranked_dups: ranked_dups.clone(),
+                cascades: cascades.clone(),
+                dynamic: sorted_dyn,
+                analyze_limit: options.analyze_limit,
+            });
+        }
 
         if matches!(options.output, OutputMode::Json | OutputMode::Jsonl) {
             let files_json: Vec<_> = analyses
@@ -446,6 +576,11 @@ pub fn run_import_analyzer(root_list: &[PathBuf], parsed: &ParsedArgs) -> io::Re
         } else {
             println!("{}", serde_json::to_string_pretty(&json_results).unwrap());
         }
+    }
+
+    if let Some(report_path) = parsed.report_path.as_ref() {
+        render_html_report(report_path, &report_sections)?;
+        eprintln!("[loctree] HTML report written to {}", report_path.display());
     }
 
     if let Some(limit) = parsed

@@ -37,6 +37,7 @@ pub struct Options {
     pub show_hidden: bool,
     pub loc_threshold: usize,
     pub analyze_limit: usize,
+    pub report_path: Option<std::path::PathBuf>,
 }
 
 pub struct LineEntry {

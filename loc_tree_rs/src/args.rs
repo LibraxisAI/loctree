@@ -19,6 +19,7 @@ pub struct ParsedArgs {
     pub loc_threshold: usize,
     pub mode: Mode,
     pub analyze_limit: usize,
+    pub report_path: Option<PathBuf>,
 }
 
 impl Default for ParsedArgs {
@@ -39,6 +40,7 @@ impl Default for ParsedArgs {
             loc_threshold: DEFAULT_LOC_THRESHOLD,
             mode: Mode::Tree,
             analyze_limit: 8,
+            report_path: None,
         }
     }
 }
@@ -133,6 +135,13 @@ pub fn parse_args() -> Result<ParsedArgs, String> {
             "--jsonl" => {
                 parsed.output = OutputMode::Jsonl;
                 i += 1;
+            }
+            "--html-report" | "--report" => {
+                let next = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--html-report requires a file path".to_string())?;
+                parsed.report_path = Some(PathBuf::from(next));
+                i += 2;
             }
             "--summary" => {
                 parsed.summary = true;
